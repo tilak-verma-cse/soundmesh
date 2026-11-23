@@ -102,7 +102,7 @@ class AudioCache:
         outtmpl = str(self.cache_dir / f"{video_id}.%(ext)s")
 
         ydl_opts: dict[str, Any] = {
-            "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio",
+            "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio/best[ext=mp4]/best",
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
@@ -120,10 +120,12 @@ class AudioCache:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
         except Exception:
+            clients = ["web", "mweb", "tv"] if cookiefile else ["android_vr", "ios", "tv", "mweb"]
             fallback_opts = {
                 **ydl_opts,
+                "format": "bestaudio/best[ext=mp4]/best",
                 "extractor_args": {
-                    "youtube": {"player_client": ["android_vr", "ios", "tv", "mweb"]}
+                    "youtube": {"player_client": clients}
                 },
             }
             with yt_dlp.YoutubeDL(fallback_opts) as ydl:
