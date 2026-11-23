@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#090b10" />
+  <title>SoundMesh — Multi-Room YouTube Music Sync</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <!-- Connection Lost Banner -->
+  <div id="connectionBanner" class="connection-banner hidden" role="status">
+    <span class="pulse-dot warn"></span>
+    Reconnecting to SoundMesh room…
+  </div>
+
+  <!-- Shared Top Navbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="brandHomeBtn" class="brand" title="Back to SoundMesh Lobby">
+        <span class="brand-mark">◈</span>
+        <div class="brand-text">
+          <span class="brand-name">SoundMesh</span>
+          <span class="brand-sub">Multi-Room Sync</span>
+        </div>
+      </button>
+
+      <!-- Room Context Cluster (shown inside a room) -->
+      <div id="roomHeaderCluster" class="room-header-cluster hidden">
+        <button id="leaveRoomBtn" class="btn btn-ghost btn-xs" title="Back to Lobby">← Lobby</button>
+        <div class="room-pill" id="roomCodeBadge" title="Click to copy room code">
+          <span id="headerRoomName">Room</span>
+          <code id="headerRoomCode">#STUDIO</code>
+        </div>
+        <div class="pill status-pill" id="headerSyncPill">
+          <span class="pulse-dot" id="headerSyncDot"></span>
+          <span id="headerSpeakerCount">0 Speakers</span>
+          <span class="divider-dot">•</span>
+          <span id="headerRttText">-- ms RTT</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <!-- Room Controls (hidden in lobby) -->
+      <div id="roomTopControls" class="room-top-controls hidden">
+        <button id="openQrBtn" class="btn btn-accent btn-sm">
+          <span>＋</span> Invite / QR
+        </button>
+        <button id="calibrateToggleBtn" class="btn btn-outline btn-sm" title="Sync calibration metronome">
+          <span>◎</span> Calibrate
+        </button>
+        <label class="guest-toggle" id="guestControlWrap" title="Allow everyone in the room to control playback">
+          <input type="checkbox" id="guestControlToggle" />
+          <span>Open Controls</span>
+        </label>
+        <div class="master-vol-wrap">
+          <button id="masterMuteBtn" class="icon-btn" title="Mute all speakers">🔊</button>
+          <input id="masterVolumeSlider" type="range" min="0" max="100" value="100" aria-label="Master volume" />
+          <span id="masterVolumeLabel" class="mono-sm">100%</span>
+        </div>
+      </div>
+
+      <!-- Account Menu -->
+      <div id="navAccountArea" class="nav-account-area"></div>
+    </div>
+  </header>
+
+  <!-- ==================== LOBBY VIEW ==================== -->
+  <main id="lobbyView" class="lobby-view">
+    <section class="lobby-hero">
+      <div class="lobby-hero-copy">
+        <span class="unlock-badge">SYNCHRONIZED MULTI-SPEAKER PLATFORM</span>
+        <h1>Play YouTube Music Across Every Device in Perfect Unison</h1>
+        <p>
+          Sign in with Google to bring your personal YouTube playlists, create a Sound Room, invite friends or your own phones/laptops, and hand the <strong>👑 Room Leader</strong> crown to whoever should DJ for all speakers.
+        </p>
+      </div>
+    </section>
+
+    <div id="publicHostBar" class="public-host-bar hidden">
+      <div id="publicHostInactive" class="public-host-row hidden">
+        <div class="public-host-copy">
+          <strong>🌐 Want a real public website link right now?</strong>
+          <span class="muted-text">Share a free <code>https://</code> link with anyone (0 signup, $0 via Cloudflare Quick Tunnel).</span>
+        </div>
+        <button id="startTunnelBtn" class="btn btn-primary btn-sm">🌐 Go Live Online (Free HTTPS Link)</button>
+      </div>
+      <div id="publicHostActive" class="public-host-row hidden">
+        <div class="public-host-copy">
+          <span class="live-site-pill">● LIVE PUBLIC SITE</span>
+          <a id="livePublicLinkAnchor" href="#" target="_blank" rel="noopener noreferrer" class="live-link-url"></a>
+        </div>
+        <div class="public-host-actions">
+          <button id="copyLiveLinkBtn" class="btn btn-accent btn-xs">Copy Public Link</button>
+          <button id="stopTunnelBtn" class="btn btn-ghost btn-xs hidden">Stop Tunnel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="lobbyLanNotice" class="lan-oauth-notice hidden">
+      <span>ℹ️ You are accessing this server over a local IP. Google Sign-In works on <code>localhost</code> or an <code>https://</code> public URL/tunnel. Phones on Wi-Fi can join instantly as Guests!</span>
+    </div>
+
+    <div class="lobby-grid">
+      <!-- Account Card -->
+      <section class="lobby-card account-card">
+        <div class="lobby-card-head">
+          <h2>Account &amp; Identity</h2>
+          <span id="accountModeBadge" class="badge-subtle">Not Signed In</span>
+        </div>
+
+        <!-- Signed Out Panel -->
+        <div id="lobbySignedOut" class="account-box">
+          <button id="lobbyGoogleLoginBtn" class="btn btn-google btn-lg">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"/>
+              <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1C3.3 21.3 7.3 24 12 24z"/>
+              <path fill="#FBBC05" d="M5.3 14.3c-.2-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l4-3.1z"/>
+              <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.5-3.5C18 1.2 15.2 0 12 0 7.3 0 3.3 2.7 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z"/>
+            </svg>
+            Continue with Google
+          </button>
+          <label class="checkbox-row">
+            <input type="checkbox" id="includeYoutubeScopeCheck" checked />
+            <span>Include my personal YouTube Music playlists &amp; likes</span>
+          </label>
+
+          <div class="or-divider"><span>or quick guest access</span></div>
+
+          <form id="guestLoginForm" class="guest-form">
+            <input id="guestNameInput" type="text" maxlength="32" placeholder="Enter your display name…" required />
+            <button type="submit" class="btn btn-outline">Continue as Guest</button>
+          </form>
+        </div>
+
+        <!-- Signed In Panel -->
+        <div id="lobbySignedIn" class="account-box hidden">
+          <div class="profile-summary">
+            <div id="profileAvatarWrap" class="avatar-lg"></div>
+            <div class="profile-details">
+              <strong id="profileNameText">User</strong>
+              <span id="profileEmailText" class="muted-text">Guest Session</span>
+              <span id="profileYtBadge" class="yt-scope-pill hidden">✓ YouTube Library Connected</span>
+            </div>
+          </div>
+          <div class="profile-actions">
+            <button id="upgradeGoogleBtn" class="btn btn-outline btn-sm hidden">Upgrade to Google Account</button>
+            <button id="connectYtScopeBtn" class="btn btn-accent btn-sm hidden">Connect YouTube Playlists</button>
+            <button id="lobbyLogoutBtn" class="btn btn-ghost btn-sm">Sign Out</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Create Room Card -->
+      <section class="lobby-card">
+        <div class="lobby-card-head">
+          <h2>Create a Sound Room</h2>
+          <span class="badge-subtle">Host &amp; Leader</span>
+        </div>
+        <form id="createRoomForm" class="stack-form">
+          <label class="field-label" for="createRoomNameInput">Room Name</label>
+          <input id="createRoomNameInput" type="text" maxlength="44" placeholder="e.g. Living Room Hi-Fi" />
+
+          <div class="two-col-row">
+            <div>
+              <label class="field-label" for="createRoomVisibility">Visibility</label>
+              <select id="createRoomVisibility">
+                <option value="public">Public (Listed in Lobby)</option>
+                <option value="private">Private (Code / Link Only)</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="createRoomPasscode">Passcode (Optional)</label>
+              <input id="createRoomPasscode" type="password" maxlength="24" placeholder="Leave blank for open" />
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-lg">Create &amp; Launch Room →</button>
+        </form>
+      </section>
+
+      <!-- Join by Code Card -->
+      <section class="lobby-card">
+        <div class="lobby-card-head">
+          <h2>Join by Room Code</h2>
+          <span class="badge-subtle">Speaker Link</span>
+        </div>
+        <form id="joinCodeForm" class="stack-form">
+          <label class="field-label" for="joinCodeInput">Room Code</label>
+          <input id="joinCodeInput" type="text" maxlength="12" placeholder="e.g. NOVA42 or STUDIO" class="code-input" required />
+
+          <label class="field-label" for="joinPasscodeInput">Passcode (if required)</label>
+          <input id="joinPasscodeInput" type="password" maxlength="24" placeholder="Optional room passcode" />
+
+          <button type="submit" class="btn btn-accent btn-lg">Join Room as Speaker →</button>
+        </form>
+      </section>
+    </div>
+
+    <!-- Live Rooms Directory -->
+    <section class="lobby-directory">
+      <div class="directory-head">
+        <div class="filter-tabs" id="lobbyRoomTabs">
+          <button class="tab-chip active" data-room-tab="public">Live Public Rooms</button>
+          <button class="tab-chip" data-room-tab="mine">My Rooms</button>
+        </div>
+        <button id="refreshRoomsBtn" class="btn btn-outline btn-xs">↻ Refresh</button>
+      </div>
+      <div id="roomsDirectoryGrid" class="rooms-grid"></div>
+    </section>
+  </main>
+
+  <!-- ==================== ROOM STUDIO VIEW ==================== -->
+  <div id="roomView" class="room-view hidden">
+    <!-- Tap-to-Unlock Audio Overlay -->
+    <div id="unlockOverlay" class="unlock-overlay hidden" role="dialog" aria-modal="true">
+      <div class="unlock-card">
+        <div class="unlock-badge" id="unlockRoomBadge">SOUNDMESH ROOM</div>
+        <h1 id="unlockHeading">Join as a Synchronized Speaker</h1>
+        <p id="unlockSubtitle">
+          Tap below to unlock your device's audio engine and sync with the Room Leader.
+        </p>
+
+        <div class="unlock-form">
+          <label class="field-label" for="unlockNameInput">Device / Speaker Name</label>
+          <input id="unlockNameInput" type="text" maxlength="32" placeholder="e.g. Living Room Phone" />
+
+          <label class="field-label" for="unlockRoleSelect">Speaker Channel Role</label>
+          <select id="unlockRoleSelect">
+            <option value="stereo">Stereo (Full L + R)</option>
+            <option value="left">Left Channel (L)</option>
+            <option value="right">Right Channel (R)</option>
+            <option value="mono">Mono Sum (L+R)</option>
+            <option value="subwoofer">Subwoofer (Low-Pass 180Hz)</option>
+          </select>
+        </div>
+
+        <div class="unlock-actions">
+          <button id="unlockBtn" class="btn btn-primary btn-lg">
+            <span>🔊</span> Enable Speaker &amp; Sync
+          </button>
+          <button id="controllerOnlyBtn" class="btn btn-ghost">
+            Controller Only (Mute This Device &amp; Play on Others)
+          </button>
+        </div>
+        <p class="unlock-hint">Tip: You can pass the 👑 Room Leader role to any device inside the room at any time.</p>
+      </div>
+    </div>
+
+    <!-- Calibration Banner -->
+    <div id="calibrationBanner" class="calibration-banner hidden">
+      <div class="cal-info">
+        <span class="cal-badge">CALIBRATION PULSE ACTIVE</span>
+        <span>Every speaker is firing a click every 1.0s. Adjust a device's <strong>− / + ms</strong> offset until all clicks merge into one sharp click!</span>
+      </div>
+      <button id="stopCalibrationBtn" class="btn btn-amber btn-sm">Stop &amp; Resume Music</button>
+    </div>
+
+    <!-- Main 3-Column Studio Workspace -->
+    <main class="workspace" id="mainWorkspace">
+      <!-- Panel 1: YouTube Music Search & Personal Library -->
+      <section class="panel panel-search" data-tab="search">
+        <div class="panel-header">
+          <h2>YouTube Music</h2>
+          <span class="badge-subtle">Catalog &amp; Library</span>
+        </div>
+
+        <form id="searchForm" class="search-bar">
+          <input
+            id="searchInput"
+            type="search"
+            placeholder="Search songs, artists, or paste YT Music link…"
+            autocomplete="off"
+          />
+          <button type="submit" class="btn btn-primary btn-sm" id="searchSubmitBtn">Search</button>
+        </form>
+
+        <div class="filter-tabs" id="searchFilterTabs">
+          <button class="tab-chip active" data-filter="songs">Songs</button>
+          <button class="tab-chip" data-filter="videos">Videos</button>
+          <button class="tab-chip" data-filter="albums">Albums</button>
+          <button class="tab-chip" data-filter="playlists">Playlists</button>
+          <button class="tab-chip" data-filter="library">★ My Library</button>
+        </div>
+
+        <div class="quick-chips" id="quickChips">
+          <button class="quick-chip" data-query="Lo-Fi Beats Chill">Lo-Fi Beats</button>
+          <button class="quick-chip" data-query="Synthwave Retrowave">Synthwave</button>
+          <button class="quick-chip" data-query="Acoustic Chill Hits">Acoustic Chill</button>
+          <button class="quick-chip" data-query="EDM Bass Drops">EDM Bass</button>
+          <button class="quick-chip" data-query="Smooth Jazz Lounge">Jazz Lounge</button>
+        </div>
+
+        <div id="collectionHeader" class="collection-header hidden">
+          <button id="collectionBackBtn" class="btn btn-ghost btn-xs">← Back</button>
+          <div class="collection-meta">
+            <strong id="collectionTitle">Playlist</strong>
+            <span id="collectionSubtitle" class="muted-text"></span>
+          </div>
+          <div class="collection-actions">
+            <button id="collectionPlayAllBtn" class="btn btn-primary btn-xs">Play All</button>
+            <button id="collectionQueueAllBtn" class="btn btn-outline btn-xs">+ Queue</button>
+          </div>
+        </div>
+
+        <div id="searchStatus" class="list-status hidden"></div>
+        <div id="searchResults" class="scroll-list">
+          <div class="empty-state">
+            <div class="empty-icon">🎵</div>
+            <p>Search any song on YouTube Music, open <strong>★ My Library</strong> for your Google playlists, or paste a YouTube link.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 2: Now Playing + Visualizer + Queue -->
+      <section class="panel panel-stage" data-tab="stage">
+        <div class="stage-hero">
+          <div id="stageBackdrop" class="stage-backdrop"></div>
+          <div class="stage-content">
+            <div class="artwork-wrap">
+              <img id="nowArtwork" class="now-artwork hidden" alt="Album art" />
+              <div id="nowArtworkPlaceholder" class="now-artwork-placeholder">◈</div>
+              <div id="loadingOverlay" class="loading-overlay hidden">
+                <div class="spinner"></div>
+                <span id="loadingPhaseText">Preparing audio…</span>
+              </div>
+            </div>
+
+            <div class="track-meta">
+              <div id="nowTitle" class="now-title">No Track Playing</div>
+              <div id="nowArtist" class="now-artist">Leader chooses tracks to play across all synced speakers</div>
+              <div id="nowError" class="now-error hidden"></div>
+            </div>
+
+            <canvas id="visualizerCanvas" class="visualizer-canvas" width="420" height="56"></canvas>
+
+            <div class="scrubber-wrap">
+              <span id="timeCurrent" class="mono-sm">0:00</span>
+              <input id="seekSlider" type="range" min="0" max="100" value="0" step="0.5" disabled aria-label="Seek track" />
+              <span id="timeDuration" class="mono-sm">0:00</span>
+            </div>
+
+            <div class="transport-row">
+              <button id="shuffleBtn" class="icon-btn" title="Shuffle">⇄</button>
+              <button id="prevBtn" class="icon-btn" title="Previous track">⏮</button>
+              <button id="playPauseBtn" class="play-btn" title="Play / Pause">▶</button>
+              <button id="nextBtn" class="icon-btn" title="Next track">⏭</button>
+              <button id="repeatBtn" class="icon-btn" title="Repeat mode">↻</button>
+            </div>
+
+            <div class="stage-util-row">
+              <button id="resyncAllBtn" class="btn btn-outline btn-xs" title="Force all speakers to snap back to exact beat">
+                ⚡ Re-Sync All
+              </button>
+              <button id="loadRadioBtn" class="btn btn-outline btn-xs" title="Load YouTube Music Up Next radio into queue">
+                📻 Load YT Radio
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="queue-section" data-tab="queue">
+          <div class="panel-header">
+            <h3>Up Next Queue <span id="queueCountBadge" class="count-badge">0</span></h3>
+            <button id="clearQueueBtn" class="btn btn-ghost btn-xs">Clear</button>
+          </div>
+          <div id="queueList" class="scroll-list queue-list">
+            <div class="empty-state compact">
+              <p>Queue is empty. Add songs to play in sync across all devices.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 3: Dynamic Leader + Multi-Speaker Array -->
+      <section class="panel panel-speakers" data-tab="speaker">
+        <div class="panel-header">
+          <div>
+            <h2>Room Speakers &amp; Leader</h2>
+            <span class="muted-text" id="arraySubtitle">Pick who leads playback for all devices</span>
+          </div>
+          <div class="speaker-header-actions">
+            <button id="autoStereoBtn" class="btn btn-outline btn-xs" title="Assign Left / Right / Mono / Sub automatically">
+              L/R Auto
+            </button>
+            <button id="pingAllBtn" class="btn btn-outline btn-xs" title="Play identify chime on all speakers">
+              🔔 Ping All
+            </button>
+          </div>
+        </div>
+
+        <!-- Leader Command Banner -->
+        <div id="leaderBanner" class="leader-banner">
+          <div class="leader-banner-top">
+            <div class="leader-who">
+              <span class="crown-badge">👑 LEADER</span>
+              <strong id="leaderBannerName">--</strong>
+              <span id="leaderBannerDevice" class="muted-text"></span>
+            </div>
+            <div class="leader-banner-actions">
+              <button id="requestLeaderBtn" class="btn btn-accent btn-xs hidden">✋ Request Leader</button>
+              <button id="takeLeaderBtn" class="btn btn-primary btn-xs hidden">👑 Take Leadership</button>
+            </div>
+          </div>
+          <div id="leaderOwnerControls" class="leader-owner-controls hidden">
+            <label class="checkbox-row compact">
+              <input type="checkbox" id="muteMeControllerToggle" />
+              <span>Play on other devices only (mute this device)</span>
+            </label>
+            <label class="checkbox-row compact">
+              <input type="checkbox" id="collabQueueToggle" />
+              <span>Let everyone add songs to queue</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Pending Leader Requests Drawer (visible to Leader & Owner) -->
+        <div id="leaderRequestsDrawer" class="leader-requests-drawer hidden"></div>
+
+        <!-- Local Device Sync Deck -->
+        <div id="localSpeakerDeck" class="local-deck">
+          <div class="local-deck-head">
+            <span class="deck-label">THIS DEVICE</span>
+            <span id="localSyncBadge" class="sync-badge needs_unlock">Tap to Unlock</span>
+          </div>
+          <div class="local-deck-stats">
+            <div><span class="stat-k">Clock RTT</span><strong id="localRttStat">-- ms</strong></div>
+            <div><span class="stat-k">Live Drift</span><strong id="localDriftStat">-- ms</strong></div>
+            <div><span class="stat-k">Offset</span><strong id="localOffsetStat">0 ms</strong></div>
+          </div>
+          <div class="local-nudge-row">
+            <span class="stat-k">Fine-Tune Sync:</span>
+            <div class="nudge-buttons">
+              <button class="nudge-btn" data-nudge="-10">−10</button>
+              <button class="nudge-btn" data-nudge="-5">−5</button>
+              <button class="nudge-btn" data-nudge="-1">−1</button>
+              <button class="nudge-btn zero" data-nudge="reset">0ms</button>
+              <button class="nudge-btn" data-nudge="1">+1</button>
+              <button class="nudge-btn" data-nudge="5">+5</button>
+              <button class="nudge-btn" data-nudge="10">+10</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="speakerList" class="scroll-list speaker-list"></div>
+      </section>
+    </main>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="mobile-nav" id="mobileNav">
+      <button class="mobile-nav-btn active" data-target="speaker">
+        <span>🔊</span><small>Speakers</small>
+      </button>
+      <button class="mobile-nav-btn" data-target="stage">
+        <span>▶</span><small>Playing</small>
+      </button>
+      <button class="mobile-nav-btn" data-target="search" id="mobileSearchNav">
+        <span>🔍</span><small>Music</small>
+      </button>
+      <button class="mobile-nav-btn" data-target="queue" id="mobileQueueNav">
+        <span>☰</span><small>Queue</small>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Invite / QR Modal -->
+  <div id="qrModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Invite Devices to Room <code id="qrRoomCodeText">#STUDIO</code></h3>
+        <button id="closeQrBtn" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <p class="muted-text">
+        Scan this QR code with any phone, tablet, or laptop to join this room as a synchronized speaker.
+      </p>
+      <div class="qr-frame">
+        <img id="qrImage" alt="Join SoundMesh Room QR Code" />
+      </div>
+      <div class="qr-ip-picker hidden" id="qrIpPickerWrap">
+        <label class="field-label" for="qrIpSelect">Room Link / Network Interface</label>
+        <select id="qrIpSelect"></select>
+      </div>
+      <div class="copy-url-row">
+        <input id="qrUrlInput" type="text" readonly />
+        <button id="copyUrlBtn" class="btn btn-primary btn-sm">Copy Link</button>
+      </div>
+      <div id="denoWarning" class="warn-box hidden">
+        Deno runtime was not detected. Some YouTube Music streams may fail to extract.
+      </div>
+      <p class="modal-tip">
+        On local Wi-Fi (<code>http://192.168.x.x</code>), phones join smoothly in Guest mode. For Google Sign-In on phones, use an HTTPS domain or Cloudflare Tunnel (<code>start.ps1 -Tunnel</code>).
+      </p>
+    </div>
+  </div>
+
+  <!-- Passcode Gate Modal -->
+  <div id="passcodeModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Room Passcode Required</h3>
+        <button id="closePasscodeBtn" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <p class="muted-text">Enter the passcode to join room <strong id="passcodeRoomLabel"></strong>.</p>
+      <form id="passcodeModalForm" class="stack-form">
+        <input id="passcodeModalInput" type="password" placeholder="Enter passcode…" required />
+        <div id="passcodeModalError" class="now-error hidden">Incorrect passcode. Try again.</div>
+        <button type="submit" class="btn btn-primary btn-lg">Unlock Room</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Google OAuth Setup Guide Modal -->
+  <div id="oauthSetupModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Configure Google Account Login</h3>
+        <button id="closeOauthSetupBtn" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <p class="muted-text">
+        To enable <strong>Sign in with Google</strong> and personal YouTube playlists, create OAuth credentials in Google Cloud Console and add them to <code>.env</code>:
+      </p>
+      <div class="code-box">
+        <div><strong>Authorized Redirect URI:</strong></div>
+        <code id="oauthCallbackPreview">http://localhost:8765/api/auth/google/callback</code>
+      </div>
+      <pre class="code-box">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret</pre>
+      <p class="modal-tip">Restart the server after saving <code>.env</code>. You can use Guest mode right now without configuring Google OAuth.</p>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

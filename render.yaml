@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: soundmesh
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: SOUNDMESH_MAX_CACHE_MB
+        value: "180"
+      - key: GOOGLE_ENABLE_YOUTUBE_SCOPE
+        value: "true"
+      - key: SOUNDMESH_SECRET_KEY
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: YTDLP_COOKIES_B64
+        sync: false
