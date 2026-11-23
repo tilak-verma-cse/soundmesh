@@ -119,17 +119,15 @@ class AudioCache:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-        except Exception as exc:
-            err_lower = str(exc).lower()
-            if any(tok in err_lower for tok in ("sign in", "bot", "confirm")):
-                fallback_opts = {
-                    **ydl_opts,
-                    "extractor_args": {"youtube": {"player_client": ["android_vr", "ios", "web"]}},
-                }
-                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-            else:
-                raise
+        except Exception:
+            fallback_opts = {
+                **ydl_opts,
+                "extractor_args": {
+                    "youtube": {"player_client": ["android_vr", "ios", "tv", "mweb"]}
+                },
+            }
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
 
         cached = self.get_cached_path(video_id)
         if not cached:
