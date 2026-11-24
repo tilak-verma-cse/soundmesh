@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,9 @@ class AudioCache:
         self.max_files = max_files
         self.max_bytes = max_bytes
         self.deno_path = find_deno_executable()
+        self.ffmpeg_path = shutil.which("ffmpeg")
         self._in_flight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._fallback_queries: dict[str, str] = {}
         self._download_sem = asyncio.Semaphore(2)
 
         if self.deno_path:
@@ -102,23 +105,21 @@ class AudioCache:
         except OSError:
             pass
 
-    def _download_sync(self, video_id: str) -> dict[str, Any]:
-        import yt_dlp  # type: ignore[import-untyped]
+    @staticmethod
+    def _reject_live_or_huge(
+        info_dict: dict[str, Any], *, incomplete: bool = False
+    ) -> str | None:
+        _ = incomplete
+        if info_dict.get("is_live") or info_dict.get("live_status") == "is_live":
+            return "Live streams are not supported for cached sync playback."
+        dur = float(info_dict.get("duration") or 0.0)
+        if dur > 14400:  # 4 hours max
+            return "Track exceeds maximum allowed duration (4 hours)."
+        return None
 
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        outtmpl = str(self.cache_dir / f"{video_id}.%(ext)s")
-
-        def _reject_live_or_huge(info_dict: dict[str, Any], *, incomplete: bool = False) -> str | None:
-            _ = incomplete
-            if info_dict.get("is_live") or info_dict.get("live_status") == "is_live":
-                return "Live streams are not supported for cached sync playback."
-            dur = float(info_dict.get("duration") or 0.0)
-            if dur > 14400:  # 4 hours max
-                return "Track exceeds maximum allowed duration (4 hours)."
-            return None
-
-        ydl_opts: dict[str, Any] = {
-            "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio/best[ext=mp4]/best",
+    def _build_base_ydl_opts(self, outtmpl: str, use_cookies: bool = True) -> dict[str, Any]:
+        opts: dict[str, Any] = {
+            "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio*/best[ext=mp4]/best*",
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
@@ -126,28 +127,162 @@ class AudioCache:
             "retries": 3,
             "socket_timeout": 15,
             "max_filesize": config.MAX_AUDIO_DOWNLOAD_BYTES,
-            "match_filter": _reject_live_or_huge,
+            "match_filter": self._reject_live_or_huge,
         }
         if self.deno_path:
-            ydl_opts["js_runtimes"] = {"deno": {"path": self.deno_path}}
-        cookiefile = config.get_ytdlp_cookiefile()
-        if cookiefile:
-            ydl_opts["cookiefile"] = cookiefile
+            opts["js_runtimes"] = {"deno": {"path": self.deno_path}}
+            opts["remote_components"] = ["ejs:github"]
+        if use_cookies:
+            cookiefile = config.get_ytdlp_cookiefile()
+            if cookiefile:
+                opts["cookiefile"] = cookiefile
+        return opts
 
+    def _pick_best_format_id(self, formats: list[dict[str, Any]]) -> str | None:
+        """Select the best playable audio (or muxed fallback) format_id directly from metadata."""
+        playable = [
+            f
+            for f in formats
+            if f.get("format_id")
+            and not str(f.get("format_id", "")).startswith("sb")
+            and f.get("ext") != "mhtml"
+            and f.get("protocol") != "mhtml"
+        ]
+        if not playable:
+            return None
+
+        def _score(fmt: dict[str, Any]) -> tuple[int, int, float]:
+            vcodec = str(fmt.get("vcodec") or "none")
+            acodec = str(fmt.get("acodec") or "none")
+            ext = str(fmt.get("ext") or "")
+            proto = str(fmt.get("protocol") or "")
+            is_audio_only = 1 if vcodec == "none" else 0
+            has_audio = 1 if acodec != "none" else 0
+            direct_https = 1 if proto in ("https", "http") else 0
+            good_ext = 2 if ext in ("m4a", "webm", "opus") else (1 if ext == "mp4" else 0)
+            abr = float(fmt.get("abr") or fmt.get("tbr") or 0.0)
+            return (is_audio_only * 2 + has_audio, good_ext + direct_https, abr)
+
+        playable.sort(key=_score, reverse=True)
+        return str(playable[0]["format_id"])
+
+    def _download_single_id(self, source_id: str, target_id: str) -> dict[str, Any]:
+        """Run a 4-strategy yt-dlp waterfall for `source_id`, saving under `target_id`."""
+        import yt_dlp  # type: ignore[import-untyped]
+
+        url = f"https://www.youtube.com/watch?v={source_id}"
+        outtmpl = str(self.cache_dir / f"{target_id}.%(ext)s")
+        has_cookies = bool(config.get_ytdlp_cookiefile())
+
+        def _cleanup_partials() -> None:
+            for p in self.cache_dir.glob(f"{target_id}.*.part"):
+                p.unlink(missing_ok=True)
+
+        strategies: list[dict[str, Any]] = []
+        if has_cookies:
+            s1 = self._build_base_ydl_opts(outtmpl, use_cookies=True)
+            s1["extractor_args"] = {"youtube": {"player_client": ["tv", "web_safari", "mweb", "web"]}}
+            strategies.append(s1)
+
+        # Cookie-free mobile/VR clients often bypass datacenter PO-token / expired-cookie blocks
+        s2 = self._build_base_ydl_opts(outtmpl, use_cookies=False)
+        s2["extractor_args"] = {"youtube": {"player_client": ["android_vr", "ios", "tv_simply"]}}
+        strategies.append(s2)
+
+        s3 = self._build_base_ydl_opts(outtmpl, use_cookies=has_cookies)
+        s3["format"] = "bestaudio*/best*"
+        s3["extractor_args"] = {"youtube": {"player_client": ["tv_embedded", "web_embedded", "mweb"]}}
+        if self.ffmpeg_path:
+            s3["postprocessors"] = [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"}
+            ]
+        strategies.append(s3)
+
+        last_exc: Exception | None = None
+        for opts in strategies:
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                if info is not None:
+                    return dict(info)
+            except Exception as exc:
+                last_exc = exc
+                _cleanup_partials()
+
+        # Strategy 4: Explicit format inspection (bypass selector quirks)
+        for probe_cookies in ([True, False] if has_cookies else [False]):
+            try:
+                probe_opts = self._build_base_ydl_opts(outtmpl, use_cookies=probe_cookies)
+                probe_opts.pop("max_filesize", None)
+                with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                    meta = ydl.extract_info(url, download=False)
+                chosen_fmt = self._pick_best_format_id(list((meta or {}).get("formats") or []))
+                if not chosen_fmt:
+                    continue
+                dl_opts = {**probe_opts, "format": chosen_fmt}
+                if self.ffmpeg_path:
+                    dl_opts["postprocessors"] = [
+                        {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"}
+                    ]
+                with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                if info is not None:
+                    return dict(info)
+            except Exception as exc:
+                last_exc = exc
+                _cleanup_partials()
+
+        assert last_exc is not None
+        raise last_exc
+
+    def _download_sync(
+        self, video_id: str, fallback_query: str = ""
+    ) -> dict[str, Any]:
+        import yt_dlp  # type: ignore[import-untyped]
+
+        info: dict[str, Any] | None = None
+        last_exc: Exception | None = None
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-        except Exception:
-            clients = ["web", "mweb", "tv"] if cookiefile else ["android_vr", "ios", "tv", "mweb"]
-            fallback_opts = {
-                **ydl_opts,
-                "format": "bestaudio/best[ext=mp4]/best",
-                "extractor_args": {
-                    "youtube": {"player_client": clients}
-                },
-            }
-            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+            info = self._download_single_id(video_id, video_id)
+        except Exception as exc:
+            last_exc = exc
+
+        # Stage 5: Alternate YouTube upload search fallback when original ID is blocked
+        if info is None and fallback_query.strip():
+            search_opts = self._build_base_ydl_opts(
+                str(self.cache_dir / f"{video_id}.%(ext)s"), use_cookies=False
+            )
+            search_opts["extract_flat"] = "in_playlist"
+            try:
+                with yt_dlp.YoutubeDL(search_opts) as ydl:
+                    sr = ydl.extract_info(
+                        f"ytsearch3:{fallback_query.strip()} audio", download=False
+                    )
+                for entry in (sr or {}).get("entries") or []:
+                    alt_id = str((entry or {}).get("id") or "").strip()
+                    if not alt_id or alt_id == video_id:
+                        continue
+                    try:
+                        validate_video_id(alt_id)
+                    except ValueError:
+                        continue
+                    try:
+                        info = self._download_single_id(alt_id, video_id)
+                        logger.info(
+                            "Recovered blocked track %s via alternate upload %s",
+                            video_id,
+                            alt_id,
+                        )
+                        break
+                    except Exception as alt_exc:
+                        last_exc = alt_exc
+                        continue
+            except Exception as sr_exc:
+                logger.debug("Fallback search failed for %s: %s", video_id, sr_exc)
+
+        if info is None:
+            assert last_exc is not None
+            raise last_exc
 
         cached = self.get_cached_path(video_id)
         if not cached:
@@ -219,9 +354,20 @@ class AudioCache:
             except OSError as exc:
                 logger.debug("Cache prune skip %s: %s", path.name, exc)
 
-    async def ensure_track(self, video_id: str) -> dict[str, Any]:
+    def set_fallback_query(self, video_id: str, query: str) -> None:
+        """Register optional title/artist fallback search for `video_id`."""
+        cleaned = (query or "").strip()
+        if cleaned:
+            if len(self._fallback_queries) >= 200:
+                self._fallback_queries.pop(next(iter(self._fallback_queries)), None)
+            self._fallback_queries[video_id] = cleaned
+
+    async def ensure_track(
+        self, video_id: str, fallback_query: str = ""
+    ) -> dict[str, Any]:
         """Return cached audio metadata or download once (deduplicated across callers)."""
         validate_video_id(video_id)
+        resolved_query = fallback_query or self._fallback_queries.pop(video_id, "")
         existing = self.get_cached_path(video_id)
         if existing:
             path, mime, duration = existing
@@ -240,6 +386,10 @@ class AudioCache:
         if task is None:
             async def _run_bounded() -> dict[str, Any]:
                 async with self._download_sem:
+                    if resolved_query:
+                        return await asyncio.to_thread(
+                            self._download_sync, video_id, resolved_query
+                        )
                     return await asyncio.to_thread(self._download_sync, video_id)
 
             task = asyncio.create_task(_run_bounded())

@@ -754,6 +754,8 @@ class SyncRoom:
 
     async def _load_and_start(self, generation: int, track: Track) -> None:
         try:
+            fallback_query = f"{track.title} {track.artist}".strip()
+            self.audio_cache.set_fallback_query(track.video_id, fallback_query)
             info = await self.audio_cache.ensure_track(track.video_id)
             if self.playback.generation != generation:
                 return
