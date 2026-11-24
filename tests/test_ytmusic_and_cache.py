@@ -117,3 +117,52 @@ async def test_audio_cache_deduplication_and_lru(tmp_path: Path, monkeypatch: py
     cache._prune_cache(protected_id="new_track3")
     remaining = sorted(p.name for p in tmp_path.glob("*.m4a"))
     assert remaining == ["mid_track2.m4a", "new_track3.m4a"]
+
+
+@pytest.mark.anyio
+async def test_audio_cache_waterfall_and_alternate_upload_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yt_dlp  # type: ignore[import-untyped]
+
+    cache = AudioCache(cache_dir=tmp_path)
+    seen_calls: list[tuple[str, bool, list[str]]] = []
+
+    class FakeYDL:
+        def __init__(self, opts: dict[str, Any]) -> None:
+            self.opts = opts
+
+        def __enter__(self) -> "FakeYDL":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = True) -> dict[str, Any]:
+            if url.startswith("ytsearch3:"):
+                return {"entries": [{"id": "altTrack002"}]}
+
+            has_cookie = "cookiefile" in self.opts
+            clients = list(
+                ((self.opts.get("extractor_args") or {}).get("youtube") or {}).get("player_client") or []
+            )
+            seen_calls.append((url, has_cookie, clients))
+
+            # Fail every attempt on original track `gkc6NcgVCNk`, succeed on alternate `altTrack002`
+            if "gkc6NcgVCNk" in url:
+                raise RuntimeError("ERROR: [youtube] gkc6NcgVCNk: Requested format is not available")
+
+            out = Path(str(self.opts["outtmpl"]).replace("%(ext)s", "m4a"))
+            out.write_bytes(b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00")
+            return {"duration": 210.0, "title": "One Thousand Miles", "artist": "Yo Yo Honey Singh"}
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+    res = await cache.ensure_track(
+        "gkc6NcgVCNk", fallback_query="One Thousand Miles Yo Yo Honey Singh"
+    )
+    assert res["video_id"] == "gkc6NcgVCNk"
+    assert res["path"].is_file()
+    assert res["duration_sec"] == 210.0
+    # Confirmed cookie-free fallback & alternate upload ID `altTrack002` were exercised
+    assert any("altTrack002" in c[0] for c in seen_calls)
+    assert any(c[1] is False for c in seen_calls)
