@@ -235,6 +235,7 @@ const speakerList = el("speakerList");
 
 const spatialEnableToggle = el("spatialEnableToggle");
 const resetSpatialPosBtn = el("resetSpatialPosBtn");
+const spatialPresetsRow = el("spatialPresetsRow");
 const spatialRoomCanvas = el("spatialRoomCanvas");
 const spatialNodesLayer = el("spatialNodesLayer");
 
@@ -1330,28 +1331,32 @@ speakerSubTabs.addEventListener("click", (e) => {
 function renderSpatialMap() {
   if (!roomState) return;
   const speakers = roomState.speakers || [];
+  const canDragAll = canControlRoom();
   spatialNodesLayer.innerHTML = speakers
     .map((s) => {
       const leftPct = Math.max(8, Math.min(92, 50 + (s.pos_x || 0) * 42));
       const topPct = Math.max(10, Math.min(90, 50 + (s.pos_y || 0) * 40));
       const isSelf = s.id === mySpeakerId;
-      return `<div class="spatial-node ${isSelf ? "is-self" : ""}" data-spatial-id="${escapeHtml(s.id)}" style="left:${leftPct}%;top:${topPct}%">${
+      const draggable = isSelf || canDragAll;
+      return `<div class="spatial-node ${isSelf ? "is-self" : ""} ${draggable ? "draggable" : ""}" data-spatial-id="${escapeHtml(s.id)}" style="left:${leftPct}%;top:${topPct}%">${
         s.is_leader ? "👑 " : ""
       }${escapeHtml(s.name)}</div>`;
     })
     .join("");
 }
 
-let draggingSpatial = false;
+let draggingSpatialId = "";
 
-function updateSpatialFromPointer(clientX, clientY) {
+function updateSpatialFromPointer(targetId, clientX, clientY) {
   const rect = spatialRoomCanvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
+  if (!rect.width || !rect.height || !targetId) return;
   const nx = Math.max(-1, Math.min(1, ((clientX - rect.left) / rect.width - 0.5) / 0.42));
   const ny = Math.max(-1, Math.min(1, ((clientY - rect.top) / rect.height - 0.5) / 0.4));
-  audioEngine.setSpatial({ pos_x: nx, pos_y: ny, spatial_enabled: true });
-  spatialEnableToggle.checked = true;
-  const node = spatialNodesLayer.querySelector(`.spatial-node[data-spatial-id="${CSS.escape(mySpeakerId)}"]`);
+  if (targetId === mySpeakerId) {
+    audioEngine.setSpatial({ pos_x: nx, pos_y: ny, spatial_enabled: true });
+    spatialEnableToggle.checked = true;
+  }
+  const node = spatialNodesLayer.querySelector(`.spatial-node[data-spatial-id="${CSS.escape(targetId)}"]`);
   if (node) {
     node.style.left = `${50 + nx * 42}%`;
     node.style.top = `${50 + ny * 40}%`;
@@ -1360,28 +1365,33 @@ function updateSpatialFromPointer(clientX, clientY) {
 }
 
 spatialRoomCanvas.addEventListener("pointerdown", (e) => {
-  const selfNode = e.target.closest(`.spatial-node[data-spatial-id="${CSS.escape(mySpeakerId)}"]`);
-  if (!selfNode) return;
-  draggingSpatial = true;
+  const node = e.target.closest(".spatial-node");
+  if (!node) return;
+  const targetId = node.dataset.spatialId || "";
+  if (targetId !== mySpeakerId && !canControlRoom()) return;
+  draggingSpatialId = targetId;
   spatialRoomCanvas.setPointerCapture(e.pointerId);
 });
 
 spatialRoomCanvas.addEventListener("pointermove", (e) => {
-  if (!draggingSpatial) return;
-  updateSpatialFromPointer(e.clientX, e.clientY);
+  if (!draggingSpatialId) return;
+  updateSpatialFromPointer(draggingSpatialId, e.clientX, e.clientY);
 });
 
 spatialRoomCanvas.addEventListener("pointerup", (e) => {
-  if (!draggingSpatial) return;
-  draggingSpatial = false;
-  const pos = updateSpatialFromPointer(e.clientX, e.clientY);
+  if (!draggingSpatialId) return;
+  const targetId = draggingSpatialId;
+  draggingSpatialId = "";
+  const pos = updateSpatialFromPointer(targetId, e.clientX, e.clientY);
   if (pos) {
     wsClient.send({
       type: "update_speaker",
-      target_id: mySpeakerId,
+      target_id: targetId,
       fields: { pos_x: pos.nx, pos_y: pos.ny, spatial_enabled: true },
     });
-    saveCloudPreset({ pos_x: pos.nx, pos_y: pos.ny });
+    if (targetId === mySpeakerId) {
+      saveCloudPreset({ pos_x: pos.nx, pos_y: pos.ny });
+    }
   }
 });
 
@@ -1395,6 +1405,39 @@ resetSpatialPosBtn.addEventListener("click", () => {
   audioEngine.setSpatial({ pos_x: 0, pos_y: 0 });
   wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { pos_x: 0, pos_y: 0 } });
   renderSpatialMap();
+});
+
+spatialPresetsRow?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-spatial-preset]");
+  if (!btn || !roomState) return;
+  const preset = btn.dataset.spatialPreset;
+  const speakers = roomState.speakers || [];
+  const targets = canControlRoom() ? speakers : speakers.filter((s) => s.id === mySpeakerId);
+
+  const surroundCoords = [
+    [-0.85, -0.75], // Front L
+    [0.85, -0.75],  // Front R
+    [-0.85, 0.75],  // Rear L
+    [0.85, 0.75],   // Rear R
+  ];
+
+  targets.forEach((sp, idx) => {
+    let fields;
+    if (preset === "center_off") {
+      fields = { pos_x: 0, pos_y: 0, spatial_enabled: false };
+    } else if (preset === "stereo_pair") {
+      const side = idx % 2 === 0 ? -0.85 : 0.85;
+      fields = { pos_x: side, pos_y: -0.35, spatial_enabled: true };
+    } else {
+      const [px, py] = surroundCoords[idx % surroundCoords.length];
+      fields = { pos_x: px, pos_y: py, spatial_enabled: true };
+    }
+    if (sp.id === mySpeakerId) {
+      audioEngine.setSpatial(fields);
+      spatialEnableToggle.checked = fields.spatial_enabled;
+    }
+    wsClient.send({ type: "update_speaker", target_id: sp.id, fields });
+  });
 });
 
 function syncEqSlidersUI(preset, bands) {
