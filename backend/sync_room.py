@@ -99,6 +99,7 @@ class SyncRoom:
         self._last_telemetry_broadcast: float = 0.0
         self._speaker_owners: dict[str, str] = {}
         self.last_activity_ms: float = server_now_ms()
+        self._ytdlp_blocked_until: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -713,11 +714,15 @@ class SyncRoom:
     def _prefetch_next(self) -> None:
         if not self.queue or self.playback.queue_index < 0:
             return
-        next_idx = self.playback.queue_index + 1
-        if next_idx < len(self.queue):
-            self.audio_cache.prefetch(self.queue[next_idx].video_id)
-        elif self.repeat == "all" and len(self.queue) > 1:
-            self.audio_cache.prefetch(self.queue[0].video_id)
+        if server_now_ms() < self._ytdlp_blocked_until:
+            return
+        cur = self.playback.queue_index
+        for offset in (1, 2):
+            idx = cur + offset
+            if idx < len(self.queue):
+                self.audio_cache.prefetch(self.queue[idx].video_id)
+            elif self.repeat == "all" and len(self.queue) > 1 and offset == 1:
+                self.audio_cache.prefetch(self.queue[0].video_id)
 
     async def play_queue_index(self, index: int) -> None:
         """Load and play the queue track at `index` across all connected speakers."""
@@ -743,6 +748,7 @@ class SyncRoom:
         pb.anchor_position_sec = 0.0
         pb.anchor_server_ms = server_now_ms()
         pb.use_streaming = False
+        pb.use_yt_iframe = False
 
         for conn in self.speakers.values():
             conn.state.ready_generation = -1
@@ -754,22 +760,54 @@ class SyncRoom:
 
     async def _load_and_start(self, generation: int, track: Track) -> None:
         try:
-            fallback_query = f"{track.title} {track.artist}".strip()
-            self.audio_cache.set_fallback_query(track.video_id, fallback_query)
-            info = await self.audio_cache.ensure_track(track.video_id)
+            pb = self.playback
+            is_local = track.source == "local" or track.video_id.startswith("local_")
+            is_cached = self.audio_cache.is_cached(track.video_id)
+            use_yt_iframe = False
+            duration_sec = float(track.duration_sec or 0.0)
+
+            if not is_local and not is_cached and server_now_ms() < self._ytdlp_blocked_until:
+                use_yt_iframe = True
+            else:
+                try:
+                    fallback_query = f"{track.title} {track.artist}".strip()
+                    self.audio_cache.set_fallback_query(track.video_id, fallback_query)
+                    info = await asyncio.wait_for(
+                        self.audio_cache.ensure_track(track.video_id),
+                        timeout=8.5,
+                    )
+                    if self.playback.generation != generation:
+                        return
+                    track.cached = True
+                    duration_sec = float(info.get("duration_sec") or track.duration_sec or 0.0)
+                    if duration_sec > 0 and track.duration_sec <= 0:
+                        track.duration_sec = duration_sec
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if is_local:
+                        raise
+                    logger.warning(
+                        "Server yt-dlp fetch failed for %s (%s); switching room to synced Direct YouTube engine",
+                        track.video_id,
+                        exc,
+                    )
+                    self._ytdlp_blocked_until = server_now_ms() + 300_000.0
+                    use_yt_iframe = True
+
             if self.playback.generation != generation:
                 return
 
-            track.cached = True
-            duration_sec = float(info.get("duration_sec") or track.duration_sec or 0.0)
-            if duration_sec > 0 and track.duration_sec <= 0:
-                track.duration_sec = duration_sec
-
-            pb = self.playback
             pb.audio_ready = True
-            pb.audio_url = f"/api/audio/{track.video_id}"
-            pb.audio_duration_sec = duration_sec
-            pb.use_streaming = duration_sec > STREAMING_THRESHOLD_SEC
+            pb.use_yt_iframe = use_yt_iframe
+            if use_yt_iframe:
+                pb.audio_url = f"yt:{track.video_id}"
+                pb.audio_duration_sec = duration_sec if duration_sec > 0 else 240.0
+                pb.use_streaming = False
+            else:
+                pb.audio_url = f"/api/audio/{track.video_id}"
+                pb.audio_duration_sec = duration_sec
+                pb.use_streaming = duration_sec > STREAMING_THRESHOLD_SEC
             pb.loading_phase = "buffering"
 
             barrier_event = asyncio.Event()
@@ -786,10 +824,9 @@ class SyncRoom:
             else:
                 self._check_ready_barrier()
                 if not barrier_event.is_set():
+                    wait_sec = 1.4 if use_yt_iframe else READY_BARRIER_TIMEOUT_SEC
                     try:
-                        await asyncio.wait_for(
-                            barrier_event.wait(), timeout=READY_BARRIER_TIMEOUT_SEC
-                        )
+                        await asyncio.wait_for(barrier_event.wait(), timeout=wait_sec)
                     except asyncio.TimeoutError:
                         logger.debug(
                             "Ready barrier timed out for generation %d", generation

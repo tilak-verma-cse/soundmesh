@@ -120,6 +120,7 @@ class PlaybackState(BaseModel):
     audio_url: str | None = None
     audio_duration_sec: float = 0.0
     use_streaming: bool = False
+    use_yt_iframe: bool = False
 
 
 class CalibrationState(BaseModel):

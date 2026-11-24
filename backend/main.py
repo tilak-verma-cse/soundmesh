@@ -676,15 +676,22 @@ async def get_album(browse_id: str) -> dict[str, Any]:
 
 @app.get("/api/related/{video_id}")
 async def get_related(
-    video_id: str, limit: int = Query(15, ge=1, le=30)
+    video_id: str,
+    limit: int = Query(15, ge=1, le=30),
+    title: str = Query("", max_length=200),
+    artist: str = Query("", max_length=140),
 ) -> dict[str, Any]:
     try:
         validate_video_id(video_id)
-        tracks = await ytmusic_service.get_related_tracks(video_id, limit=limit)
-        _annotate_cached(tracks)
-        return {"tracks": tracks}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        tracks = await ytmusic_service.get_related_tracks(
+            video_id, limit=limit, title=title, artist=artist
+        )
+        _annotate_cached(tracks)
+        return {"tracks": tracks}
     except Exception as exc:
         logger.warning("Related radio load error (%s): %s", video_id, exc)
         raise HTTPException(status_code=502, detail="Failed to load radio tracks.")

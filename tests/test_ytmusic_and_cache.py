@@ -166,3 +166,71 @@ async def test_audio_cache_waterfall_and_alternate_upload_fallback(
     # Confirmed cookie-free fallback & alternate upload ID `altTrack002` were exercised
     assert any("altTrack002" in c[0] for c in seen_calls)
     assert any(c[1] is False for c in seen_calls)
+
+
+@pytest.mark.anyio
+async def test_related_radio_fallback_on_json_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When get_watch_playlist fails (e.g., datacenter HTML/JSONDecodeError), radio falls back to search."""
+    import json
+    from backend.ytmusic_service import YTMusicService
+
+    service = YTMusicService()
+
+    class BrokenWatchYT:
+        def get_watch_playlist(self, **kwargs):
+            raise json.JSONDecodeError("Expecting value", "", 0)
+
+    monkeypatch.setattr(service, "_get_client", lambda: BrokenWatchYT())
+    monkeypatch.setattr(
+        service,
+        "_search_sync",
+        lambda query, filter_type="songs", limit=15: {
+            "filter": filter_type,
+            "tracks": [
+                {
+                    "video_id": "dQw4w9WgXcQ",
+                    "title": "Should Be Excluded",
+                    "artist": "Rick Astley",
+                    "duration_sec": 212.0,
+                },
+                {
+                    "video_id": "radioTrack01",
+                    "title": "Together Forever",
+                    "artist": "Rick Astley",
+                    "duration_sec": 204.0,
+                },
+            ],
+            "collections": [],
+        },
+    )
+
+    tracks = await service.get_related_tracks(
+        "dQw4w9WgXcQ",
+        limit=10,
+        title="Never Gonna Give You Up",
+        artist="Rick Astley",
+    )
+    assert len(tracks) == 1
+    assert tracks[0]["video_id"] == "radioTrack01"
+
+
+def test_ytdlp_cookiefile_restores_fresh_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """get_ytdlp_cookiefile should rewrite fresh cookie bytes so yt-dlp cannot corrupt them."""
+    import base64
+    from backend import config
+
+    raw_cookie = b"# Netscape HTTP Cookie File\nfresh=1\n"
+    monkeypatch.setenv("YTDLP_COOKIES_B64", base64.b64encode(raw_cookie).decode("ascii"))
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+
+    first = config.get_ytdlp_cookiefile()
+    assert first is not None and Path(first).read_bytes() == raw_cookie
+
+    Path(first).write_bytes(b"corrupted-by-ytdlp")
+    second = config.get_ytdlp_cookiefile()
+    assert second is not None and Path(second).read_bytes() == raw_cookie

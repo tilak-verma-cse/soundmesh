@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 _SAFE_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 
+try:
+    import yt_dlp_ejs as _yt_dlp_ejs  # type: ignore[import-untyped]  # noqa: F401
+
+    _HAS_BUNDLED_EJS = True
+except ImportError:
+    _HAS_BUNDLED_EJS = False
+
 MIME_BY_EXT: dict[str, str] = {
     ".m4a": "audio/mp4",
     ".mp4": "audio/mp4",
@@ -119,19 +126,21 @@ class AudioCache:
 
     def _build_base_ydl_opts(self, outtmpl: str, use_cookies: bool = True) -> dict[str, Any]:
         opts: dict[str, Any] = {
-            "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio*/best[ext=mp4]/best*",
+            "format": "bestaudio[ext=m4a][abr<=140]/bestaudio[ext=webm][abr<=140]/bestaudio[abr<=160]/18/bestaudio*/best*",
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
-            "retries": 3,
-            "socket_timeout": 15,
+            "retries": 1,
+            "fragment_retries": 1,
+            "socket_timeout": 6,
             "max_filesize": config.MAX_AUDIO_DOWNLOAD_BYTES,
             "match_filter": self._reject_live_or_huge,
         }
         if self.deno_path:
             opts["js_runtimes"] = {"deno": {"path": self.deno_path}}
-            opts["remote_components"] = ["ejs:github"]
+            if not _HAS_BUNDLED_EJS:
+                opts["remote_components"] = ["ejs:github"]
         if use_cookies:
             cookiefile = config.get_ytdlp_cookiefile()
             if cookiefile:
@@ -167,7 +176,7 @@ class AudioCache:
         return str(playable[0]["format_id"])
 
     def _download_single_id(self, source_id: str, target_id: str) -> dict[str, Any]:
-        """Run a 4-strategy yt-dlp waterfall for `source_id`, saving under `target_id`."""
+        """Run fast 2-client yt-dlp extraction for `source_id`, saving under `target_id`."""
         import yt_dlp  # type: ignore[import-untyped]
 
         url = f"https://www.youtube.com/watch?v={source_id}"
@@ -181,50 +190,18 @@ class AudioCache:
         strategies: list[dict[str, Any]] = []
         if has_cookies:
             s1 = self._build_base_ydl_opts(outtmpl, use_cookies=True)
-            s1["extractor_args"] = {"youtube": {"player_client": ["tv", "web_safari", "mweb", "web"]}}
+            s1["extractor_args"] = {"youtube": {"player_client": ["web"]}}
             strategies.append(s1)
 
-        # Cookie-free mobile/VR clients often bypass datacenter PO-token / expired-cookie blocks
+        # Cookie-free android_vr typically resolves in ~1.6s when web cookies are throttled
         s2 = self._build_base_ydl_opts(outtmpl, use_cookies=False)
-        s2["extractor_args"] = {"youtube": {"player_client": ["android_vr", "ios", "tv_simply"]}}
+        s2["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
         strategies.append(s2)
-
-        s3 = self._build_base_ydl_opts(outtmpl, use_cookies=has_cookies)
-        s3["format"] = "bestaudio*/best*"
-        s3["extractor_args"] = {"youtube": {"player_client": ["tv_embedded", "web_embedded", "mweb"]}}
-        if self.ffmpeg_path:
-            s3["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"}
-            ]
-        strategies.append(s3)
 
         last_exc: Exception | None = None
         for opts in strategies:
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                if info is not None:
-                    return dict(info)
-            except Exception as exc:
-                last_exc = exc
-                _cleanup_partials()
-
-        # Strategy 4: Explicit format inspection (bypass selector quirks)
-        for probe_cookies in ([True, False] if has_cookies else [False]):
-            try:
-                probe_opts = self._build_base_ydl_opts(outtmpl, use_cookies=probe_cookies)
-                probe_opts.pop("max_filesize", None)
-                with yt_dlp.YoutubeDL(probe_opts) as ydl:
-                    meta = ydl.extract_info(url, download=False)
-                chosen_fmt = self._pick_best_format_id(list((meta or {}).get("formats") or []))
-                if not chosen_fmt:
-                    continue
-                dl_opts = {**probe_opts, "format": chosen_fmt}
-                if self.ffmpeg_path:
-                    dl_opts["postprocessors"] = [
-                        {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"}
-                    ]
-                with yt_dlp.YoutubeDL(dl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                 if info is not None:
                     return dict(info)

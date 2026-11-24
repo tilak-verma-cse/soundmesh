@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="/icons/icon.svg" />
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
-<body class="ui-minimal">
+<body class="ui-minimal page-stage">
   <!-- Reusable Precision Vector Sprite Sheet -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
     <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M7.5 5.65c0-1.08 1.18-1.75 2.11-1.2l10.2 6.05c.91.54.91 1.86 0 2.4L9.61 18.95c-.93.55-2.11-.12-2.11-1.2V5.65z"/></symbol>
@@ -39,13 +39,18 @@
     <symbol id="i-wave" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h2l3-7 4 14 4-10 2 3h3"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18 6L6 18M6 6l12 12"/></symbol>
     <symbol id="i-arrow-left" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M19 12H5m6 6l-6-6 6-6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" d="M10 4v16"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M8.5 14.5s1.4 2 3.5 2 3.5-2 3.5-2"/><circle cx="9" cy="9.5" r="1" fill="currentColor"/><circle cx="15" cy="9.5" r="1" fill="currentColor"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
   </svg>
 
-  <!-- Subtle Tactile Noise Grain & Ambient Aura -->
+  <!-- Subtle Atmospheric Layer -->
   <div class="ambient-aurora" aria-hidden="true"></div>
   <div class="grain-overlay" aria-hidden="true"></div>
 
-  <!-- Connection Lost Banner -->
+  <!-- Connection Banner -->
   <div id="connectionBanner" class="connection-banner hidden" role="status">
     <span class="pulse-dot warn"></span>
     <span>Reconnecting to SoundMesh phase clock…</span>
@@ -54,9 +59,9 @@
   <!-- ==================== TOP COMMAND BAR ==================== -->
   <header class="topbar">
     <div class="topbar-left">
-      <button id="brandHomeBtn" class="brand" title="Return to SoundMesh Lobby">
+      <button id="brandHomeBtn" class="brand" title="Back to SoundMesh Lobby">
         <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 36 36" width="22" height="22">
+          <svg viewBox="0 0 36 36" width="21" height="21">
             <circle cx="15" cy="18" r="8.5" fill="none" stroke="currentColor" stroke-width="2.6"/>
             <circle cx="21" cy="18" r="8.5" fill="none" stroke="currentColor" stroke-width="2.6" opacity="0.55"/>
             <circle cx="18" cy="18" r="3" fill="currentColor"/>
@@ -68,13 +73,13 @@
         </div>
       </button>
 
-      <!-- Active Room Context Pill -->
+      <!-- Active Room Pill -->
       <div id="roomHeaderCluster" class="room-header-cluster hidden">
-        <button id="leaveRoomBtn" class="btn btn-ghost btn-xs" title="Leave room to Lobby">
+        <button id="leaveRoomBtn" class="btn btn-ghost btn-xs" title="Leave room">
           <svg class="svg-i" width="14" height="14"><use href="#i-arrow-left"/></svg>
           <span>Lobby</span>
         </button>
-        <button class="room-pill" id="roomCodeBadge" title="Open QR &amp; Invite Link">
+        <button class="room-pill" id="roomCodeBadge" title="Room Invite &amp; QR">
           <span id="headerRoomName">Studio</span>
           <code id="headerRoomCode">#STUDIO</code>
         </button>
@@ -88,75 +93,84 @@
     </div>
 
     <div class="topbar-right">
-      <!-- 3 Distinct Architectural Experiences -->
-      <div id="uiModeSwitcher" class="mode-switcher hidden" role="group" aria-label="Experience Mode">
-        <button class="mode-btn active" data-ui-mode="minimal" title="Clean tactile turntable &amp; sheets">Pure</button>
-        <button class="mode-btn" data-ui-mode="studio" title="3-deck acoustic console &amp; parametric EQ">Studio</button>
-        <button class="mode-btn" data-ui-mode="party" title="Full-bleed concert halo &amp; bass lightshow">Stage</button>
-      </div>
-
-      <button id="themeToggleBtn" class="icon-btn" title="Switch Ceramic Light / Velvet Dark">
-        <svg class="svg-i" width="16" height="16"><use href="#i-sun"/></svg>
-      </button>
-      <button id="installPwaBtn" class="btn btn-outline btn-xs hidden">Install App</button>
-
-      <!-- Room Action Controls -->
-      <div id="roomTopControls" class="room-top-controls hidden">
-        <button id="openQrBtn" class="btn btn-accent btn-sm" title="Invite phones &amp; laptops">
-          <svg class="svg-i" width="15" height="15"><use href="#i-qr"/></svg>
-          <span>Invite</span>
+      <!-- Layout & Appearance Dropdown -->
+      <div class="dropdown-wrap hidden" id="layoutMenuWrap">
+        <button id="layoutMenuBtn" class="btn btn-outline btn-xs dropdown-trigger" aria-haspopup="true" aria-expanded="false">
+          <svg class="svg-i" width="14" height="14"><use href="#i-layout"/></svg>
+          <span id="activeLayoutLabel">Focus</span>
+          <svg class="svg-i caret" width="12" height="12"><use href="#i-chevron"/></svg>
         </button>
-        <button id="calibrateToggleBtn" class="btn btn-outline btn-sm studio-only-inline" title="Toggle reference sync pulse">
-          <svg class="svg-i" width="15" height="15"><use href="#i-wave"/></svg>
-          <span>Sync Pulse</span>
-        </button>
-        <label class="guest-toggle studio-only-inline" id="guestControlWrap" title="Allow guests to control transport">
-          <input type="checkbox" id="guestControlToggle" />
-          <span>Open DJ</span>
-        </label>
-        <div class="master-vol-wrap studio-only-inline">
-          <button id="masterMuteBtn" class="icon-btn" title="Master Mute" aria-label="Master Mute">
-            <svg class="svg-i" width="16" height="16"><use href="#i-vol"/></svg>
+        <div id="layoutDropdownMenu" class="popover-menu hidden" role="menu">
+          <div class="popover-title">WORKSPACE LAYOUT</div>
+          <div id="uiModeSwitcher" class="menu-stack">
+            <button class="menu-item mode-btn active" data-ui-mode="minimal">
+              <div><strong>Focus Pages</strong><small>Clean separate views for Stage, Music, Queue &amp; Speakers</small></div>
+            </button>
+            <button class="menu-item mode-btn" data-ui-mode="studio">
+              <div><strong>Split Studio</strong><small>2-column deck with persistent Stage + tabbed tools</small></div>
+            </button>
+            <button class="menu-item mode-btn" data-ui-mode="party">
+              <div><strong>Cinema Stage</strong><small>Edge-to-edge reactive concert halo &amp; lyrics</small></div>
+            </button>
+          </div>
+          <div class="menu-divider"></div>
+          <button id="themeToggleBtn" class="menu-item" title="Toggle Ceramic Light / Obsidian Dark">
+            <svg class="svg-i" width="15" height="15"><use href="#i-sun"/></svg>
+            <span id="themeToggleLabel">Switch to Ceramic Light</span>
           </button>
-          <input id="masterVolumeSlider" type="range" min="0" max="100" value="100" aria-label="Master volume" />
-          <span id="masterVolumeLabel" class="mono-sm">100%</span>
+          <button id="installPwaBtn" class="menu-item hidden">
+            <svg class="svg-i" width="15" height="15"><use href="#i-upload"/></svg>
+            <span>Install Desktop / Phone App</span>
+          </button>
         </div>
       </div>
 
-      <div id="navAccountArea" class="nav-account-area"></div>
+      <!-- Quick Invite Action -->
+      <div id="roomTopControls" class="room-top-controls hidden">
+        <button id="openQrBtn" class="btn btn-accent btn-xs" title="Share room QR code">
+          <svg class="svg-i" width="14" height="14"><use href="#i-qr"/></svg>
+          <span>Invite</span>
+        </button>
+      </div>
+
+      <!-- Profile Avatar & Account Popover -->
+      <div class="dropdown-wrap" id="accountMenuWrap">
+        <div id="navAccountArea" class="nav-account-area"></div>
+        <div id="accountDropdownMenu" class="popover-menu right-aligned hidden" role="menu">
+          <div id="navProfileBox" class="popover-profile">
+            <strong id="navDropName">Guest Listener</strong>
+            <small id="navDropMeta" class="muted-text">Not signed in</small>
+          </div>
+          <div class="menu-divider"></div>
+          <button id="navDropGoogleBtn" class="menu-item">Continue with Google</button>
+          <button id="navDropYtBtn" class="menu-item hidden">Link YouTube Playlists</button>
+          <button id="navDropLogoutBtn" class="menu-item danger hidden">Sign Out</button>
+        </div>
+      </div>
     </div>
   </header>
 
-  <!-- ==================== BENTO LOBBY VIEW ==================== -->
+  <!-- ==================== STREAMLINED TABBED LOBBY ==================== -->
   <main id="lobbyView" class="lobby-view">
     <section class="lobby-hero">
       <div class="lobby-hero-copy">
         <div class="hero-eyebrow">
           <span class="pulse-dot"></span>
-          <span>SUB-MILLISECOND NTP ACOUSTIC MESH</span>
+          <span>PHASE-LOCKED ACOUSTIC MESH</span>
         </div>
-        <h1>Every screen in the room,<br /><span class="hero-accent-text">playing as one soundstage.</span></h1>
+        <h1>Every device in the room,<br /><span class="hero-accent-text">playing as one speaker.</span></h1>
         <p>
-          Pull lossless-timed streams independently onto phones, tablets, and laptops—phase-aligned by a shared master clock with zero Bluetooth pairing or voice-call compression.
+          Pull YouTube Music or local audio streams onto phones and laptops together, synced to a shared master clock with zero Bluetooth pairing.
         </p>
-        <div class="hero-pillars">
-          <span class="hero-chip">3 Distinct UI Worlds</span>
-          <span class="hero-chip">5-Band Parametric EQ</span>
-          <span class="hero-chip">1-Tap Mic Auto-Align</span>
-          <span class="hero-chip">Dynamic DJ Handoff</span>
-        </div>
       </div>
-
-      <!-- Animated Phase-Lock Visual Sculpture -->
       <div class="hero-sculpture" aria-hidden="true">
         <div class="sculpture-ring r1"></div>
         <div class="sculpture-ring r2"></div>
-        <div class="sculpture-ring r3"></div>
         <div class="sculpture-core">
-          <span class="sculpture-kicker">DRIFT LOCK</span>
+          <span class="sculpture-kicker">PHASE LOCK</span>
           <strong>±0.4 ms</strong>
           <div class="sculpture-bars">
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
           </div>
         </div>
       </div>
@@ -167,7 +181,7 @@
       <div id="publicHostInactive" class="public-host-row hidden">
         <div class="public-host-copy">
           <strong>Instant Public HTTPS Tunnel</strong>
-          <span class="muted-text">Spin up a zero-config Cloudflare link so friends off your Wi-Fi can join.</span>
+          <span class="muted-text">Share a live link outside your Wi-Fi via Cloudflare Quick Tunnel.</span>
         </div>
         <button id="startTunnelBtn" class="btn btn-primary btn-sm">Go Live Online</button>
       </div>
@@ -184,162 +198,148 @@
     </div>
 
     <div id="lobbyLanNotice" class="lan-oauth-notice hidden">
-      <span>Local LAN IP detected — Google OAuth requires <code>localhost</code> or an <code>https://</code> link, while Guest Access works right away on Wi-Fi.</span>
+      <span>Local LAN IP detected — Google OAuth needs <code>localhost</code> or <code>https://</code>, while Guest Pass works immediately on Wi-Fi.</span>
     </div>
 
-    <!-- 3-Card Bento Action Grid -->
-    <div class="lobby-grid">
-      <!-- Card 1: Identity -->
-      <section class="lobby-card account-card">
-        <div class="lobby-card-head">
-          <div>
-            <span class="card-step">01 · IDENTITY</span>
-            <h2>Listener Profile</h2>
-          </div>
-          <span id="accountModeBadge" class="badge-subtle">Signed Out</span>
-        </div>
-
-        <div id="lobbySignedOut" class="account-box">
-          <button id="lobbyGoogleLoginBtn" class="btn btn-google btn-lg">
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <!-- Clean Single-Card Tabbed Hub -->
+    <section class="lobby-hub">
+      <!-- Compact Identity Bar (Sign-In toggles cleanly here) -->
+      <div class="hub-identity-bar">
+        <div id="lobbySignedOut" class="hub-auth-row">
+          <button id="lobbyGoogleLoginBtn" class="btn btn-google btn-sm">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"/>
               <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1C3.3 21.3 7.3 24 12 24z"/>
               <path fill="#FBBC05" d="M5.3 14.3c-.2-.7-.4-1.5-.4-2.3s.1-1.6.4-2.3V6.6H1.3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l4-3.1z"/>
               <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.5-3.5C18 1.2 15.2 0 12 0 7.3 0 3.3 2.7 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z"/>
             </svg>
-            <span>Continue with Google</span>
+            <span>Google Sign-In</span>
           </button>
-          <label class="checkbox-row">
+          <label class="checkbox-row compact">
             <input type="checkbox" id="includeYoutubeScopeCheck" checked />
-            <span>Sync my personal YouTube Music playlists &amp; likes</span>
+            <span>Sync YT Library</span>
           </label>
-
-          <div class="or-divider"><span>or instant guest pass</span></div>
-
           <form id="guestLoginForm" class="guest-form">
-            <input id="guestNameInput" type="text" maxlength="32" placeholder="Your display name…" required />
-            <button type="submit" class="btn btn-outline">Enter</button>
+            <input id="guestNameInput" type="text" maxlength="32" placeholder="Or enter guest name…" required />
+            <button type="submit" class="btn btn-outline btn-sm">Guest</button>
           </form>
         </div>
 
-        <div id="lobbySignedIn" class="account-box hidden">
+        <div id="lobbySignedIn" class="hub-auth-row hidden">
           <div class="profile-summary">
-            <div id="profileAvatarWrap" class="avatar-lg"></div>
+            <div id="profileAvatarWrap" class="avatar-sm"></div>
             <div class="profile-details">
               <strong id="profileNameText">Listener</strong>
               <span id="profileEmailText" class="muted-text">Guest Session</span>
-              <span id="profileYtBadge" class="yt-scope-pill hidden">YouTube Library Linked</span>
             </div>
+            <span id="profileYtBadge" class="yt-scope-pill hidden">YT Library On</span>
+            <span id="accountModeBadge" class="badge-subtle">Signed In</span>
           </div>
           <div class="profile-actions">
-            <button id="upgradeGoogleBtn" class="btn btn-outline btn-sm hidden">Link Google</button>
-            <button id="connectYtScopeBtn" class="btn btn-accent btn-sm hidden">Enable YT Playlists</button>
-            <button id="lobbyLogoutBtn" class="btn btn-ghost btn-sm">Sign Out</button>
+            <button id="upgradeGoogleBtn" class="btn btn-outline btn-xs hidden">Link Google</button>
+            <button id="connectYtScopeBtn" class="btn btn-accent btn-xs hidden">Connect YT</button>
+            <button id="lobbyLogoutBtn" class="btn btn-ghost btn-xs">Sign Out</button>
           </div>
         </div>
-      </section>
+      </div>
 
-      <!-- Card 2: Create Room -->
-      <section class="lobby-card">
-        <div class="lobby-card-head">
-          <div>
-            <span class="card-step">02 · BROADCAST</span>
-            <h2>Start a Sound Room</h2>
-          </div>
-          <span class="badge-subtle">Host</span>
-        </div>
-        <form id="createRoomForm" class="stack-form">
-          <label class="field-label" for="createRoomNameInput">Room Title</label>
-          <input id="createRoomNameInput" type="text" maxlength="44" placeholder="e.g. Midnight Vinyl Sessions" />
+      <!-- Lobby Hub Page Switcher -->
+      <div class="hub-tabs" id="lobbyHubTabs">
+        <button class="tab-chip active" data-hub-tab="join">Join Room</button>
+        <button class="tab-chip" data-hub-tab="create">Create Room</button>
+        <button class="tab-chip" data-hub-tab="browse">On-Air Rooms</button>
+      </div>
 
-          <div class="two-col-row">
-            <div>
-              <label class="field-label" for="createRoomVisibility">Directory</label>
-              <select id="createRoomVisibility">
-                <option value="public">Public Lounge</option>
-                <option value="private">Unlisted (Code Only)</option>
-              </select>
-            </div>
-            <div>
-              <label class="field-label" for="createRoomPasscode">PIN Lock</label>
-              <input id="createRoomPasscode" type="password" maxlength="24" placeholder="Optional PIN" />
-            </div>
-          </div>
-
-          <button type="submit" class="btn btn-primary btn-lg">Launch Sound Room</button>
-        </form>
-      </section>
-
-      <!-- Card 3: Join Room -->
-      <section class="lobby-card">
-        <div class="lobby-card-head">
-          <div>
-            <span class="card-step">03 · TUNE IN</span>
-            <h2>Join with Code</h2>
-          </div>
-          <span class="badge-subtle">Speaker</span>
-        </div>
+      <!-- Tab 1: Join -->
+      <div id="hubTabJoin" class="hub-pane">
         <form id="joinCodeForm" class="stack-form">
           <label class="field-label" for="joinCodeInput">Room Code</label>
-          <input id="joinCodeInput" type="text" maxlength="12" placeholder="NOVA42 or STUDIO" class="code-input" required />
-
-          <label class="field-label" for="joinPasscodeInput">Room PIN (if locked)</label>
-          <input id="joinPasscodeInput" type="password" maxlength="24" placeholder="Leave empty if open" />
-
-          <button type="submit" class="btn btn-accent btn-lg">Connect as Speaker</button>
+          <input id="joinCodeInput" type="text" maxlength="12" placeholder="STUDIO or 6-letter code" class="code-input" required />
+          <details class="compact-disclosure">
+            <summary>Have a room PIN?</summary>
+            <div class="disclosure-body">
+              <input id="joinPasscodeInput" type="password" maxlength="24" placeholder="Enter optional room PIN" />
+            </div>
+          </details>
+          <button type="submit" class="btn btn-primary btn-lg">Connect to Room</button>
         </form>
-      </section>
-    </div>
-
-    <!-- Live Rooms Directory -->
-    <section class="lobby-directory">
-      <div class="directory-head">
-        <div class="filter-tabs" id="lobbyRoomTabs">
-          <button class="tab-chip active" data-room-tab="public">On-Air Rooms</button>
-          <button class="tab-chip" data-room-tab="mine">My Rooms</button>
-        </div>
-        <button id="refreshRoomsBtn" class="btn btn-outline btn-xs">Refresh</button>
       </div>
-      <div id="roomsDirectoryGrid" class="rooms-grid"></div>
+
+      <!-- Tab 2: Create -->
+      <div id="hubTabCreate" class="hub-pane hidden">
+        <form id="createRoomForm" class="stack-form">
+          <label class="field-label" for="createRoomNameInput">Room Name</label>
+          <input id="createRoomNameInput" type="text" maxlength="44" placeholder="e.g. Hostel Chill Session" />
+          <details class="compact-disclosure">
+            <summary>Privacy &amp; PIN Options</summary>
+            <div class="disclosure-body two-col-row">
+              <div>
+                <label class="field-label" for="createRoomVisibility">Visibility</label>
+                <select id="createRoomVisibility">
+                  <option value="public">Public Lounge</option>
+                  <option value="private">Private (Code Only)</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" for="createRoomPasscode">Room PIN</label>
+                <input id="createRoomPasscode" type="password" maxlength="24" placeholder="Optional PIN" />
+              </div>
+            </div>
+          </details>
+          <button type="submit" class="btn btn-primary btn-lg">Launch Sound Room</button>
+        </form>
+      </div>
+
+      <!-- Tab 3: On-Air Directory -->
+      <div id="hubTabBrowse" class="hub-pane hidden">
+        <div class="directory-head">
+          <div class="filter-tabs" id="lobbyRoomTabs">
+            <button class="tab-chip active" data-room-tab="public">Public</button>
+            <button class="tab-chip" data-room-tab="mine">My Rooms</button>
+          </div>
+          <button id="refreshRoomsBtn" class="btn btn-outline btn-xs">Refresh</button>
+        </div>
+        <div id="roomsDirectoryGrid" class="rooms-grid"></div>
+      </div>
     </section>
   </main>
 
   <!-- ==================== ACTIVE ROOM EXPERIENCE ==================== -->
   <div id="roomView" class="room-view hidden">
-    <!-- Stage Mode Concert Lighting -->
     <div id="partyLightLayer" class="party-light-layer" aria-hidden="true"></div>
-    <!-- Floating Reactions Layer -->
     <div id="reactionFloatLayer" class="reaction-float-layer" aria-hidden="true"></div>
-    <!-- Drawer Scrim Backdrop for Pure (Minimal) Mode -->
-    <div id="drawerScrim" class="drawer-scrim hidden" aria-hidden="true"></div>
 
-    <!-- Audio Engine Unlock Gate -->
+    <!-- Arm Audio Overlay -->
     <div id="unlockOverlay" class="unlock-overlay hidden" role="dialog" aria-modal="true">
       <div class="unlock-card">
         <div class="unlock-badge" id="unlockRoomBadge">ROOM #STUDIO</div>
         <h1>Arm Speaker Output</h1>
-        <p>One tap wakes your browser's Web Audio DSP graph and locks onto the room's master phase clock.</p>
+        <p>One tap wakes your device's audio engine and locks it onto the room's master clock.</p>
 
         <div class="unlock-form">
-          <label class="field-label" for="unlockNameInput">Speaker Label</label>
-          <input id="unlockNameInput" type="text" maxlength="32" placeholder="e.g. Desk MacBook / Right Shelf Phone" />
+          <label class="field-label" for="unlockNameInput">Speaker Name</label>
+          <input id="unlockNameInput" type="text" maxlength="32" placeholder="e.g. Tilak's Phone" />
 
-          <label class="field-label" for="unlockRoleSelect">Acoustic Channel Assignment</label>
-          <select id="unlockRoleSelect">
-            <option value="stereo">Full Stereo (L + R)</option>
-            <option value="left">Left Channel Only (L)</option>
-            <option value="right">Right Channel Only (R)</option>
-            <option value="mono">Balanced Mono Sum</option>
-            <option value="subwoofer">Subwoofer Low-Pass (180 Hz)</option>
-          </select>
+          <details class="compact-disclosure">
+            <summary>Speaker Role (Default: Full Stereo)</summary>
+            <div class="disclosure-body">
+              <select id="unlockRoleSelect">
+                <option value="stereo">Full Stereo (L + R)</option>
+                <option value="left">Left Channel Only (L)</option>
+                <option value="right">Right Channel Only (R)</option>
+                <option value="mono">Balanced Mono Sum</option>
+                <option value="subwoofer">Subwoofer Low-Pass (180 Hz)</option>
+              </select>
+            </div>
+          </details>
         </div>
 
         <div class="unlock-actions">
           <button id="unlockBtn" class="btn btn-primary btn-lg">
             <svg class="svg-i" width="18" height="18"><use href="#i-vol"/></svg>
-            <span>Arm Speaker &amp; Lock Sync</span>
+            <span>Enable Speaker &amp; Sync</span>
           </button>
-          <button id="controllerOnlyBtn" class="btn btn-ghost">Join as Silent Remote Controller</button>
+          <button id="controllerOnlyBtn" class="btn btn-ghost">Remote Controller Only (Mute This Device)</button>
         </div>
       </div>
     </div>
@@ -348,55 +348,61 @@
     <div id="calibrationBanner" class="calibration-banner hidden">
       <div class="cal-info">
         <span class="cal-badge">SYNC PULSE ON</span>
-        <span>Reference ticks firing every 1.0s — open <strong>Sonar Sync</strong> on any lagging phone and tap <strong>1-Tap Mic Align</strong>.</span>
+        <span>Reference ticks firing — tap <strong>1-Tap Mic Align</strong> under Speakers → Sonar Sync.</span>
       </div>
       <button id="stopCalibrationBtn" class="btn btn-amber btn-sm">Resume Music</button>
     </div>
 
-    <!-- Pure (Minimal) Mode Floating Pill Dock -->
-    <div id="minimalQuickBar" class="minimal-quick-bar">
-      <button id="minimalMusicDrawerBtn" class="dock-pill-btn">
-        <svg class="svg-i" width="16" height="16"><use href="#i-search"/></svg>
-        <span>Crate &amp; Search</span>
-      </button>
-      <div class="minimal-leader-pill" id="minimalLeaderSummary">Leader: --</div>
-      <button id="minimalAudioDrawerBtn" class="dock-pill-btn accent">
-        <svg class="svg-i" width="16" height="16"><use href="#i-speakers"/></svg>
-        <span>Speakers &amp; DSP</span>
-      </button>
+    <!-- Desktop Multi-Page Navigation (used cleanly in Focus Pages; Studio swaps left pane!) -->
+    <div id="roomSubNavBar" class="room-subnav-bar">
+      <nav class="page-nav-pills" id="desktopPageNav" aria-label="Room Pages">
+        <button class="page-pill active" data-page="stage">
+          <svg class="svg-i" width="14" height="14"><use href="#i-play"/></svg>
+          <span>Now Playing</span>
+        </button>
+        <button class="page-pill" data-page="search" id="desktopSearchTab">
+          <svg class="svg-i" width="14" height="14"><use href="#i-search"/></svg>
+          <span>Music &amp; Library</span>
+        </button>
+        <button class="page-pill" data-page="queue">
+          <svg class="svg-i" width="14" height="14"><use href="#i-queue"/></svg>
+          <span>Queue <span id="queueTabBadge" class="mini-count">0</span></span>
+        </button>
+        <button class="page-pill" data-page="speaker">
+          <svg class="svg-i" width="14" height="14"><use href="#i-speakers"/></svg>
+          <span>Speakers &amp; DSP</span>
+        </button>
+      </nav>
     </div>
 
-    <!-- Adaptive 3-Deck Workspace -->
+    <!-- Multi-Page / Split-Studio Workspace -->
     <main class="workspace" id="mainWorkspace">
-      <!-- DECK 1: Music Crate, Personal Library & Local Upload -->
+      <!-- PAGE / PANE 1: Music & Library -->
       <section class="panel panel-search" id="panelSearch" data-tab="search">
         <div class="panel-header">
           <div>
-            <span class="deck-kicker">SOURCE CRATE</span>
-            <h2>Catalog &amp; Library</h2>
+            <span class="deck-kicker">MUSIC CRATE</span>
+            <h2>Search &amp; Library</h2>
           </div>
           <div class="panel-header-tools">
-            <label class="btn btn-outline btn-xs upload-label" title="Upload MP3, WAV, M4A, or FLAC">
+            <label class="btn btn-outline btn-xs upload-label" title="Upload local MP3, WAV, M4A, or FLAC">
               <svg class="svg-i" width="13" height="13"><use href="#i-upload"/></svg>
-              <span>Upload Audio</span>
+              <span>Upload</span>
               <input id="localAudioFileInput" type="file" accept=".mp3,.m4a,.wav,.ogg,.webm,.mp4,.flac,audio/*" class="hidden" />
             </label>
-            <button class="icon-btn drawer-close-btn" data-close-drawer="search" aria-label="Close drawer">
-              <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
-            </button>
           </div>
         </div>
 
         <form id="searchForm" class="search-bar">
           <div class="search-input-wrap">
             <svg class="svg-i search-icon" width="15" height="15"><use href="#i-search"/></svg>
-            <input id="searchInput" type="search" placeholder="Songs, artists, or YouTube Music URL…" autocomplete="off" />
+            <input id="searchInput" type="search" placeholder="Search songs, artists, or paste YT Music link…" autocomplete="off" />
           </div>
-          <button type="submit" class="btn btn-primary btn-sm" id="searchSubmitBtn">Find</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="searchSubmitBtn">Search</button>
         </form>
 
         <div class="filter-tabs" id="searchFilterTabs">
-          <button class="tab-chip active" data-filter="songs">Tracks</button>
+          <button class="tab-chip active" data-filter="songs">Songs</button>
           <button class="tab-chip" data-filter="videos">Videos</button>
           <button class="tab-chip" data-filter="albums">Albums</button>
           <button class="tab-chip" data-filter="playlists">Playlists</button>
@@ -404,10 +410,10 @@
         </div>
 
         <div class="quick-chips" id="quickChips">
-          <button class="quick-chip" data-query="Boiler Room Electronic Mix">Electronic</button>
-          <button class="quick-chip" data-query="Late Night Lo-Fi Vinyl">Vinyl Lo-Fi</button>
-          <button class="quick-chip" data-query="Bollywood Unplugged Hits">Desi Unplugged</button>
-          <button class="quick-chip" data-query="Hip Hop Heavy Sub Bass">Sub Bass Test</button>
+          <button class="quick-chip" data-query="Lo-Fi Chill Beats">Lo-Fi</button>
+          <button class="quick-chip" data-query="Electronic Dance Mix">Electronic</button>
+          <button class="quick-chip" data-query="Bollywood Acoustic Hits">Acoustic</button>
+          <button class="quick-chip" data-query="Hip Hop Bass Boost">Sub Bass</button>
           <button class="quick-chip" data-query="Indie Alternative Chill">Indie</button>
         </div>
 
@@ -427,158 +433,76 @@
         </div>
 
         <div id="searchStatus" class="list-status hidden"></div>
-        <div id="searchResults" class="scroll-list">
+        <div id="searchResults" class="scroll-list catalog-grid">
           <div class="empty-state">
-            <div class="empty-glyph">
-              <svg class="svg-i" width="28" height="28"><use href="#i-lyrics"/></svg>
-            </div>
-            <p>Search any track on YouTube Music, browse <strong>My Library</strong>, or drop a local audio file.</p>
+            <div class="empty-glyph"><svg class="svg-i" width="26" height="26"><use href="#i-lyrics"/></svg></div>
+            <p>Search any track on YouTube Music, open <strong>My Library</strong>, or upload an MP3.</p>
           </div>
         </div>
       </section>
 
-      <!-- DECK 2: Turntable / Stage Centerpiece & Upvote Queue -->
-      <section class="panel panel-stage" id="panelStage" data-tab="stage">
-        <div class="stage-hero">
-          <div id="stageBackdrop" class="stage-backdrop"></div>
-          <div class="stage-content">
-            <!-- Vinyl Sleeve + 360° Radial Halo Canvas -->
-            <div class="turntable-stage" id="turntableStage">
-              <canvas id="haloCanvas" class="halo-canvas" width="320" height="320" aria-hidden="true"></canvas>
-              <div class="vinyl-disc" id="vinylDisc" aria-hidden="true">
-                <div class="vinyl-grooves"></div>
-                <div class="vinyl-label"></div>
-              </div>
-              <div class="artwork-wrap" id="artworkBeatWrap">
-                <img id="nowArtwork" class="now-artwork hidden" crossorigin="anonymous" alt="Album cover" />
-                <div id="nowArtworkPlaceholder" class="now-artwork-placeholder">
-                  <svg viewBox="0 0 48 48" width="44" height="44">
-                    <circle cx="20" cy="24" r="12" fill="none" stroke="currentColor" stroke-width="2.5"/>
-                    <circle cx="28" cy="24" r="12" fill="none" stroke="currentColor" stroke-width="2.5" opacity="0.5"/>
-                    <circle cx="24" cy="24" r="4" fill="currentColor"/>
-                  </svg>
-                </div>
-                <div id="loadingOverlay" class="loading-overlay hidden">
-                  <div class="spinner"></div>
-                  <span id="loadingPhaseText">Locking streams…</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="track-meta">
-              <div id="nowTitle" class="now-title">Ready to Spin</div>
-              <div id="nowArtist" class="now-artist">Pick a track to phase-lock every speaker in the room</div>
-              <div id="nowError" class="now-error hidden"></div>
-            </div>
-
-            <!-- Toggleable Live Lyrics Sheet -->
-            <div id="lyricsPanel" class="lyrics-panel hidden">
-              <div class="lyrics-head">
-                <span>LIVE LYRICS</span>
-                <button id="closeLyricsBtn" class="icon-btn" aria-label="Close lyrics">
-                  <svg class="svg-i" width="14" height="14"><use href="#i-close"/></svg>
-                </button>
-              </div>
-              <pre id="lyricsBody" class="lyrics-body">Loading lyrics…</pre>
-            </div>
-
-            <!-- Harmonic Mirrored Spectrum Analyzer -->
-            <canvas id="visualizerCanvas" class="visualizer-canvas" width="520" height="64"></canvas>
-
-            <!-- Precision Scrubber -->
-            <div class="scrubber-wrap">
-              <span id="timeCurrent" class="mono-sm">0:00</span>
-              <input id="seekSlider" type="range" min="0" max="100" value="0" step="0.25" disabled aria-label="Track progress" />
-              <span id="timeDuration" class="mono-sm">0:00</span>
-            </div>
-
-            <!-- Tactile Transport Deck -->
-            <div class="transport-row">
-              <button id="shuffleBtn" class="icon-btn" title="Shuffle Queue" aria-label="Shuffle">
-                <svg class="svg-i" width="17" height="17"><use href="#i-shuffle"/></svg>
-              </button>
-              <button id="prevBtn" class="icon-btn transport-step" title="Previous" aria-label="Previous">
-                <svg class="svg-i" width="20" height="20"><use href="#i-prev"/></svg>
-              </button>
-              <button id="playPauseBtn" class="play-btn" title="Play / Pause" aria-label="Play or Pause">
-                <svg class="svg-i" width="24" height="24"><use href="#i-play"/></svg>
-              </button>
-              <button id="nextBtn" class="icon-btn transport-step" title="Next" aria-label="Next">
-                <svg class="svg-i" width="20" height="20"><use href="#i-next"/></svg>
-              </button>
-              <button id="repeatBtn" class="icon-btn" title="Repeat Mode" aria-label="Repeat">
-                <svg class="svg-i" width="17" height="17"><use href="#i-repeat"/></svg>
-                <span class="repeat-one-dot hidden" id="repeatOneBadge">1</span>
-              </button>
-            </div>
-
-            <!-- Utility & Crowd Vibe Strip -->
-            <div class="stage-actions-cluster">
-              <div class="stage-util-row">
-                <button id="toggleLyricsBtn" class="btn btn-outline btn-xs">
-                  <svg class="svg-i" width="13" height="13"><use href="#i-lyrics"/></svg>
-                  <span>Lyrics</span>
-                </button>
-                <button id="resyncAllBtn" class="btn btn-outline btn-xs" title="Re-align all speaker clocks">
-                  <svg class="svg-i" width="13" height="13"><use href="#i-bolt"/></svg>
-                  <span>Tighten Sync</span>
-                </button>
-                <button id="loadRadioBtn" class="btn btn-outline btn-xs" title="Auto-fill similar tracks">
-                  <svg class="svg-i" width="13" height="13"><use href="#i-radio"/></svg>
-                  <span>Auto Radio</span>
-                </button>
-              </div>
-
-              <div class="reaction-bar" id="reactionBar" aria-label="Send live reaction">
-                <button class="react-btn" data-emoji="🔥" title="Fire">🔥</button>
-                <button class="react-btn" data-emoji="❤️" title="Love">❤️</button>
-                <button class="react-btn" data-emoji="🎉" title="Party">🎉</button>
-                <button class="react-btn" data-emoji="⚡" title="Energy">⚡</button>
-                <button class="react-btn" data-emoji="🎧" title="Vibe">🎧</button>
-                <button class="react-btn" data-emoji="🙌" title="Hands up">🙌</button>
-              </div>
-            </div>
+      <!-- PAGE / PANE 2: Dedicated Upvote Jukebox Queue -->
+      <section class="panel panel-queue" id="panelQueue" data-tab="queue">
+        <div class="panel-header">
+          <div>
+            <span class="deck-kicker">UP NEXT JUKEBOX</span>
+            <h2>Room Queue <span id="queueCountBadge" class="count-badge">0</span></h2>
           </div>
-        </div>
-
-        <!-- Upvote Jukebox Queue -->
-        <div class="queue-section" data-tab="queue">
-          <div class="panel-header compact-header">
-            <h3>Up Next Jukebox <span id="queueCountBadge" class="count-badge">0</span></h3>
+          <div class="panel-header-tools">
+            <button id="queueAutoRadioBtn" class="btn btn-accent btn-xs" title="Add similar songs automatically">
+              <svg class="svg-i" width="13" height="13"><use href="#i-radio"/></svg>
+              <span>Auto Radio</span>
+            </button>
             <button id="clearQueueBtn" class="btn btn-ghost btn-xs">Clear</button>
           </div>
-          <div id="queueList" class="scroll-list queue-list">
-            <div class="empty-state compact">
-              <p>Queue is open — add songs or upvote tracks so crowd favorites play next.</p>
-            </div>
+        </div>
+        <div id="queueList" class="scroll-list queue-list">
+          <div class="empty-state compact">
+            <p>Queue is empty — pick a song in Music &amp; Library or tap <strong>Auto Radio</strong>.</p>
           </div>
         </div>
       </section>
 
-      <!-- DECK 3: Speaker Console, Spatial Stage, Parametric EQ & Guided Sonar Sync -->
+      <!-- PAGE / PANE 3: Speakers & DSP (With Tune ▾ Dropdowns) -->
       <section class="panel panel-speakers" id="panelSpeakers" data-tab="speaker">
         <div class="panel-header">
           <div>
-            <span class="deck-kicker">ACOUSTIC MATRIX</span>
+            <span class="deck-kicker">AUDIO CONSOLE</span>
             <h2>Speakers &amp; DSP</h2>
           </div>
-          <div class="speaker-header-actions">
-            <button id="autoStereoBtn" class="btn btn-outline btn-xs" title="Distribute L / R / Mono / Sub channels">Auto L/R</button>
-            <button id="pingAllBtn" class="btn btn-outline btn-xs" title="Play chime on every speaker">Chime All</button>
-            <button class="icon-btn drawer-close-btn" data-close-drawer="speaker" aria-label="Close drawer">
-              <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
+          <div class="dropdown-wrap">
+            <button id="speakerToolsMenuBtn" class="btn btn-outline btn-xs dropdown-trigger" aria-haspopup="true" aria-expanded="false">
+              <span>Room Tools</span>
+              <svg class="svg-i caret" width="12" height="12"><use href="#i-chevron"/></svg>
             </button>
+            <div id="speakerToolsDropdown" class="popover-menu right-aligned hidden">
+              <button id="autoStereoBtn" class="menu-item">Auto-Assign L / R / Sub</button>
+              <button id="pingAllBtn" class="menu-item">Chime All Speakers</button>
+              <button id="calibrateToggleBtn" class="menu-item">Toggle Sync Pulse</button>
+              <div id="leaderOwnerControls" class="hidden">
+                <div class="menu-divider"></div>
+                <label class="menu-check-item">
+                  <input type="checkbox" id="muteMeControllerToggle" />
+                  <span>Mute this device (Controller)</span>
+                </label>
+                <label class="menu-check-item">
+                  <input type="checkbox" id="collabQueueToggle" />
+                  <span>Allow everyone to queue</span>
+                </label>
+                <label class="menu-check-item" id="guestControlWrap">
+                  <input type="checkbox" id="guestControlToggle" />
+                  <span>Open DJ controls to all</span>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Dynamic Room Leader Strip -->
+        <!-- Compact DJ Strip -->
         <div id="leaderBanner" class="leader-banner">
           <div class="leader-banner-top">
             <div class="leader-who">
-              <span class="crown-badge">
-                <svg class="svg-i" width="11" height="11"><use href="#i-crown"/></svg>
-                <span>DJ LEADER</span>
-              </span>
+              <span class="crown-badge"><svg class="svg-i" width="11" height="11"><use href="#i-crown"/></svg><span>DJ</span></span>
               <strong id="leaderBannerName">--</strong>
               <span id="leaderBannerDevice" class="muted-text"></span>
             </div>
@@ -587,39 +511,29 @@
               <button id="takeLeaderBtn" class="btn btn-primary btn-xs hidden">Reclaim Crown</button>
             </div>
           </div>
-          <div id="leaderOwnerControls" class="leader-owner-controls hidden">
-            <label class="checkbox-row compact">
-              <input type="checkbox" id="muteMeControllerToggle" />
-              <span>Controller-only mode (mute this screen)</span>
-            </label>
-            <label class="checkbox-row compact">
-              <input type="checkbox" id="collabQueueToggle" />
-              <span>Collaborative Jukebox (everyone can queue)</span>
-            </label>
-          </div>
         </div>
 
         <div id="leaderRequestsDrawer" class="leader-requests-drawer hidden"></div>
 
-        <!-- DSP Console Sub-Navigation -->
+        <!-- DSP Section Switcher -->
         <div class="filter-tabs dsp-tabs" id="speakerSubTabs">
-          <button class="tab-chip active" data-sp-tab="list">Nodes</button>
-          <button class="tab-chip" data-sp-tab="eq">5-Band EQ</button>
+          <button class="tab-chip active" data-sp-tab="list">Speakers</button>
+          <button class="tab-chip" data-sp-tab="eq">Equalizer</button>
           <button class="tab-chip" data-sp-tab="sync">Sonar Sync</button>
           <button class="tab-chip" data-sp-tab="map">2D Stage</button>
         </div>
 
-        <!-- Sub-Tab 1: Connected Speaker Strips -->
+        <!-- Tab 1: Compact Speaker Strips (Volume & Trim tucked in Tune ▾ dropdown!) -->
         <div id="spTabList" class="sp-tab-pane">
           <div id="speakerList" class="scroll-list speaker-list"></div>
         </div>
 
-        <!-- Sub-Tab 2: 5-Band Parametric EQ with Live Response Curve -->
+        <!-- Tab 2: 5-Band Parametric EQ + Live Curve -->
         <div id="spTabEq" class="sp-tab-pane hidden">
           <div class="eq-curve-card">
             <div class="eq-curve-head">
-              <span class="deck-label">FREQUENCY RESPONSE</span>
-              <span class="mono-sm" id="eqActivePresetLabel">FLAT</span>
+              <span class="deck-label">FREQUENCY CURVE</span>
+              <span class="mono-sm" id="eqActivePresetLabel">REFERENCE FLAT</span>
             </div>
             <svg id="eqCurveSvg" class="eq-curve-svg" viewBox="0 0 320 96" preserveAspectRatio="none" aria-hidden="true">
               <defs>
@@ -633,29 +547,27 @@
               <path id="eqCurvePath" d="M0,48 L320,48" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
             </svg>
           </div>
-
           <div class="eq-presets-row" id="eqPresetButtons">
-            <button class="tab-chip active" data-eq="flat">Reference Flat</button>
+            <button class="tab-chip active" data-eq="flat">Flat</button>
             <button class="tab-chip" data-eq="party_bass">Club Sub</button>
-            <button class="tab-chip" data-eq="hostel_boost">Room Loudness</button>
-            <button class="tab-chip" data-eq="vocal">Crisp Vocal</button>
-            <button class="tab-chip" data-eq="late_night">Midnight Soft</button>
+            <button class="tab-chip" data-eq="hostel_boost">Loudness</button>
+            <button class="tab-chip" data-eq="vocal">Vocal</button>
+            <button class="tab-chip" data-eq="late_night">Midnight</button>
           </div>
-
           <div class="eq-sliders-grid" id="eqBandsContainer">
-            <div class="eq-band"><small id="eqVal0">0dB</small><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60Hz Sub" /><span class="mono-sm">60</span></div>
-            <div class="eq-band"><small id="eqVal1">0dB</small><input type="range" min="-12" max="12" value="0" data-band="1" aria-label="230Hz Low" /><span class="mono-sm">230</span></div>
-            <div class="eq-band"><small id="eqVal2">0dB</small><input type="range" min="-12" max="12" value="0" data-band="2" aria-label="910Hz Mid" /><span class="mono-sm">910</span></div>
-            <div class="eq-band"><small id="eqVal3">0dB</small><input type="range" min="-12" max="12" value="0" data-band="3" aria-label="3.6kHz Presence" /><span class="mono-sm">3.6k</span></div>
-            <div class="eq-band"><small id="eqVal4">0dB</small><input type="range" min="-12" max="12" value="0" data-band="4" aria-label="14kHz Air" /><span class="mono-sm">14k</span></div>
+            <div class="eq-band"><small id="eqVal0">0dB</small><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60Hz" /><span class="mono-sm">60</span></div>
+            <div class="eq-band"><small id="eqVal1">0dB</small><input type="range" min="-12" max="12" value="0" data-band="1" aria-label="230Hz" /><span class="mono-sm">230</span></div>
+            <div class="eq-band"><small id="eqVal2">0dB</small><input type="range" min="-12" max="12" value="0" data-band="2" aria-label="910Hz" /><span class="mono-sm">910</span></div>
+            <div class="eq-band"><small id="eqVal3">0dB</small><input type="range" min="-12" max="12" value="0" data-band="3" aria-label="3.6kHz" /><span class="mono-sm">3.6k</span></div>
+            <div class="eq-band"><small id="eqVal4">0dB</small><input type="range" min="-12" max="12" value="0" data-band="4" aria-label="14kHz" /><span class="mono-sm">14k</span></div>
           </div>
         </div>
 
-        <!-- Sub-Tab 3: Guided Acoustic Sonar Calibration -->
+        <!-- Tab 3: Guided Acoustic Sonar Calibration -->
         <div id="spTabSync" class="sp-tab-pane hidden">
           <div id="localSpeakerDeck" class="local-deck">
             <div class="local-deck-head">
-              <span class="deck-label">LOCAL PHASE TELEMETRY</span>
+              <span class="deck-label">THIS DEVICE CLOCK</span>
               <span id="localSyncBadge" class="sync-badge needs_unlock">Standby</span>
             </div>
             <div class="local-deck-stats">
@@ -664,7 +576,7 @@
               <div><span class="stat-k">HW Offset</span><strong id="localOffsetStat">0 ms</strong></div>
             </div>
             <div class="local-nudge-row">
-              <span class="stat-k">Manual Trim (ms)</span>
+              <span class="stat-k">Manual Trim</span>
               <div class="nudge-buttons">
                 <button class="nudge-btn" data-nudge="-10">−10</button>
                 <button class="nudge-btn" data-nudge="-5">−5</button>
@@ -683,37 +595,35 @@
               <div class="sonar-ring s2"></div>
               <svg class="svg-i sonar-mic-icon" width="20" height="20"><use href="#i-mic"/></svg>
             </div>
-            <h4>1-Tap Acoustic Sonar Align</h4>
-            <p class="muted-text">
-              Bluetooth speakers and phone DACs add hidden hardware delay (20–180 ms). Tap <strong>Auto-Align via Mic</strong> to briefly pulse the room, measure the exact millisecond sound hits your mic, and cancel echo automatically.
-            </p>
+            <h4>1-Tap Mic Sonar Align</h4>
+            <p class="muted-text">Automatically measures speaker latency through your microphone and adjusts millisecond sync.</p>
             <div class="acoustic-actions">
               <button id="micAutoCalBtn" class="btn btn-primary btn-sm">
                 <svg class="svg-i" width="14" height="14"><use href="#i-mic"/></svg>
-                <span>1-Tap Auto-Align via Mic</span>
+                <span>1-Tap Mic Align</span>
               </button>
-              <button id="emitChirpBtn" class="btn btn-outline btn-sm" title="Play a 2kHz–7kHz acoustic sweep on this speaker to verify output">
+              <button id="emitChirpBtn" class="btn btn-outline btn-sm">
                 <svg class="svg-i" width="14" height="14"><use href="#i-wave"/></svg>
-                <span>Test Sonar Sweep</span>
+                <span>Test Sweep</span>
               </button>
             </div>
-            <div id="acousticResultText" class="sonar-readout mono-sm">Ready — place phone near listening spot and tap Auto-Align.</div>
+            <div id="acousticResultText" class="sonar-readout mono-sm">Ready to calibrate.</div>
           </div>
         </div>
 
-        <!-- Sub-Tab 4: Optional 2D Spatial Stage -->
+        <!-- Tab 4: Optional 2D Spatial Stage -->
         <div id="spTabMap" class="sp-tab-pane hidden">
           <div class="spatial-controls">
             <label class="checkbox-row">
               <input type="checkbox" id="spatialEnableToggle" />
-              <span>Enable Spatial Panning</span>
+              <span>Enable Spatial Balance</span>
             </label>
-            <button id="resetSpatialPosBtn" class="btn btn-ghost btn-xs">Reset Center</button>
+            <button id="resetSpatialPosBtn" class="btn btn-ghost btn-xs">Center</button>
           </div>
           <div class="spatial-presets-row" id="spatialPresetsRow">
             <button class="tab-chip" data-spatial-preset="stereo_pair">Stereo Pair</button>
-            <button class="tab-chip" data-spatial-preset="surround_4">4-Corner Quad</button>
-            <button class="tab-chip" data-spatial-preset="center_off">All Full Stereo</button>
+            <button class="tab-chip" data-spatial-preset="surround_4">4-Corner</button>
+            <button class="tab-chip" data-spatial-preset="center_off">Full Stereo</button>
           </div>
           <div id="spatialRoomCanvas" class="spatial-room-map">
             <div class="spatial-grid-rings" aria-hidden="true"></div>
@@ -724,20 +634,146 @@
             <div class="spatial-listener" title="Sweet Spot">YOU</div>
             <div id="spatialNodesLayer" class="spatial-nodes-layer"></div>
           </div>
-          <p class="muted-text spatial-hint">Optional surround balance — use a 1-tap preset above or drag speakers around the listener sweet spot.</p>
+        </div>
+      </section>
+
+      <!-- PAGE / PANE 4: Now Playing Stage (Clean, Focused, Zero Clutter) -->
+      <section class="panel panel-stage mobile-active" id="panelStage" data-tab="stage">
+        <div class="stage-hero">
+          <div id="stageBackdrop" class="stage-backdrop"></div>
+          <div class="stage-content">
+            <!-- Vinyl Sleeve + 360° Radial Halo -->
+            <div class="turntable-stage" id="turntableStage">
+              <canvas id="haloCanvas" class="halo-canvas" width="320" height="320" aria-hidden="true"></canvas>
+              <div class="vinyl-disc" id="vinylDisc" aria-hidden="true">
+                <div class="vinyl-grooves"></div>
+                <div class="vinyl-label"></div>
+              </div>
+              <div class="artwork-wrap" id="artworkBeatWrap">
+                <img id="nowArtwork" class="now-artwork hidden" crossorigin="anonymous" alt="Album cover" />
+                <div id="nowArtworkPlaceholder" class="now-artwork-placeholder">
+                  <svg viewBox="0 0 48 48" width="44" height="44">
+                    <circle cx="20" cy="24" r="12" fill="none" stroke="currentColor" stroke-width="2.5"/>
+                    <circle cx="28" cy="24" r="12" fill="none" stroke="currentColor" stroke-width="2.5" opacity="0.5"/>
+                    <circle cx="24" cy="24" r="4" fill="currentColor"/>
+                  </svg>
+                </div>
+                <div id="loadingOverlay" class="loading-overlay hidden">
+                  <div class="spinner"></div>
+                  <span id="loadingPhaseText">Locking audio…</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="track-meta">
+              <div id="nowTitle" class="now-title">Ready to Spin</div>
+              <div id="nowArtist" class="now-artist">Open Music &amp; Library to choose a song</div>
+              <div id="nowError" class="now-error hidden"></div>
+            </div>
+
+            <!-- Toggleable Live Lyrics Sheet -->
+            <div id="lyricsPanel" class="lyrics-panel hidden">
+              <div class="lyrics-head">
+                <span>LIVE LYRICS</span>
+                <button id="closeLyricsBtn" class="icon-btn" aria-label="Close lyrics">
+                  <svg class="svg-i" width="14" height="14"><use href="#i-close"/></svg>
+                </button>
+              </div>
+              <pre id="lyricsBody" class="lyrics-body">Loading lyrics…</pre>
+            </div>
+
+            <!-- Mirrored Harmonic Spectrum -->
+            <canvas id="visualizerCanvas" class="visualizer-canvas" width="520" height="58"></canvas>
+
+            <!-- Precision Scrubber -->
+            <div class="scrubber-wrap">
+              <span id="timeCurrent" class="mono-sm">0:00</span>
+              <input id="seekSlider" type="range" min="0" max="100" value="0" step="0.25" disabled aria-label="Seek track" />
+              <span id="timeDuration" class="mono-sm">0:00</span>
+            </div>
+
+            <!-- Tactile Transport -->
+            <div class="transport-row">
+              <button id="shuffleBtn" class="icon-btn" title="Shuffle" aria-label="Shuffle">
+                <svg class="svg-i" width="17" height="17"><use href="#i-shuffle"/></svg>
+              </button>
+              <button id="prevBtn" class="icon-btn transport-step" title="Previous" aria-label="Previous">
+                <svg class="svg-i" width="20" height="20"><use href="#i-prev"/></svg>
+              </button>
+              <button id="playPauseBtn" class="play-btn" title="Play / Pause" aria-label="Play or Pause">
+                <svg class="svg-i" width="24" height="24"><use href="#i-play"/></svg>
+              </button>
+              <button id="nextBtn" class="icon-btn transport-step" title="Next" aria-label="Next">
+                <svg class="svg-i" width="20" height="20"><use href="#i-next"/></svg>
+              </button>
+              <button id="repeatBtn" class="icon-btn" title="Repeat" aria-label="Repeat">
+                <svg class="svg-i" width="17" height="17"><use href="#i-repeat"/></svg>
+                <span class="repeat-one-dot hidden" id="repeatOneBadge">1</span>
+              </button>
+            </div>
+
+            <!-- Progressive Disclosure Action Pills (React ▾ + Options ▾) -->
+            <div class="stage-secondary-bar">
+              <div class="dropdown-wrap">
+                <button id="reactMenuBtn" class="btn btn-outline btn-xs dropdown-trigger" aria-haspopup="true" aria-expanded="false">
+                  <svg class="svg-i" width="14" height="14"><use href="#i-smile"/></svg>
+                  <span>React</span>
+                </button>
+                <div id="reactPopover" class="popover-menu reaction-popover hidden">
+                  <div class="reaction-bar" id="reactionBar">
+                    <button class="react-btn" data-emoji="🔥">🔥</button>
+                    <button class="react-btn" data-emoji="❤️">❤️</button>
+                    <button class="react-btn" data-emoji="🎉">🎉</button>
+                    <button class="react-btn" data-emoji="⚡">⚡</button>
+                    <button class="react-btn" data-emoji="🎧">🎧</button>
+                    <button class="react-btn" data-emoji="🙌">🙌</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="dropdown-wrap">
+                <button id="stageOptionsBtn" class="btn btn-outline btn-xs dropdown-trigger" aria-haspopup="true" aria-expanded="false">
+                  <svg class="svg-i" width="14" height="14"><use href="#i-more"/></svg>
+                  <span>Options</span>
+                </button>
+                <div id="stageOptionsMenu" class="popover-menu right-aligned hidden">
+                  <button id="toggleLyricsBtn" class="menu-item">
+                    <svg class="svg-i" width="14" height="14"><use href="#i-lyrics"/></svg>
+                    <span>Show Live Lyrics</span>
+                  </button>
+                  <button id="loadRadioBtn" class="menu-item">
+                    <svg class="svg-i" width="14" height="14"><use href="#i-radio"/></svg>
+                    <span>Start Auto Radio Mix</span>
+                  </button>
+                  <button id="resyncAllBtn" class="menu-item">
+                    <svg class="svg-i" width="14" height="14"><use href="#i-bolt"/></svg>
+                    <span>Tighten Sync Across Nodes</span>
+                  </button>
+                  <div class="menu-divider"></div>
+                  <div class="menu-slider-row">
+                    <button id="masterMuteBtn" class="icon-btn" title="Master Mute" aria-label="Master Mute">
+                      <svg class="svg-i" width="15" height="15"><use href="#i-vol"/></svg>
+                    </button>
+                    <input id="masterVolumeSlider" type="range" min="0" max="100" value="100" aria-label="Master volume" />
+                    <span id="masterVolumeLabel" class="mono-sm">100%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
-    <!-- Floating Glass Mobile Tab Dock -->
+    <!-- Floating Glass Mobile Dock -->
     <nav class="mobile-nav" id="mobileNav" aria-label="Room Views">
       <button class="mobile-nav-btn active" data-target="stage">
         <svg class="svg-i" width="19" height="19"><use href="#i-play"/></svg>
-        <small>Stage</small>
+        <small>Playing</small>
       </button>
       <button class="mobile-nav-btn" data-target="search" id="mobileSearchNav">
         <svg class="svg-i" width="19" height="19"><use href="#i-search"/></svg>
-        <small>Crate</small>
+        <small>Music</small>
       </button>
       <button class="mobile-nav-btn" data-target="queue" id="mobileQueueNav">
         <svg class="svg-i" width="19" height="19"><use href="#i-queue"/></svg>
@@ -754,12 +790,12 @@
   <div id="qrModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>Add Speakers to <code id="qrRoomCodeText">#STUDIO</code></h3>
+        <h3>Invite to <code id="qrRoomCodeText">#STUDIO</code></h3>
         <button id="closeQrBtn" class="icon-btn" aria-label="Close">
           <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
         </button>
       </div>
-      <p class="muted-text">Scan with any phone camera or share the direct room link—no app install required.</p>
+      <p class="muted-text">Scan with any phone camera or copy the room link.</p>
       <div class="qr-frame">
         <img id="qrImage" alt="Join SoundMesh Room QR Code" />
       </div>
@@ -772,7 +808,7 @@
         <button id="copyUrlBtn" class="btn btn-primary btn-sm">Copy</button>
         <button id="nativeShareBtn" class="btn btn-accent btn-sm hidden">Share</button>
       </div>
-      <div id="denoWarning" class="warn-box hidden">Deno runtime not found—some YouTube signatures may require Deno.</div>
+      <div id="denoWarning" class="warn-box hidden">Deno runtime not found—direct fallback active.</div>
     </div>
   </div>
 
@@ -785,10 +821,10 @@
           <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
         </button>
       </div>
-      <p class="muted-text">Enter the PIN for room <strong id="passcodeRoomLabel"></strong>.</p>
+      <p class="muted-text">Enter the PIN for <strong id="passcodeRoomLabel"></strong>.</p>
       <form id="passcodeModalForm" class="stack-form">
         <input id="passcodeModalInput" type="password" placeholder="Enter room PIN…" required />
-        <div id="passcodeModalError" class="now-error hidden">Incorrect PIN. Try again.</div>
+        <div id="passcodeModalError" class="now-error hidden">Incorrect PIN.</div>
         <button type="submit" class="btn btn-primary btn-lg">Unlock Room</button>
       </form>
     </div>
@@ -803,13 +839,13 @@
           <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
         </button>
       </div>
-      <p class="muted-text">Configure Google OAuth credentials in <code>.env</code> or Render Environment:</p>
+      <p class="muted-text">Set Google OAuth credentials in <code>.env</code> or Render Environment:</p>
       <div class="code-box">
         <div><strong>Authorized Redirect URI:</strong></div>
         <code id="oauthCallbackPreview">http://localhost:8765/api/auth/google/callback</code>
       </div>
-      <pre class="code-box">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret</pre>
+      <pre class="code-box">GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...</pre>
       <p class="modal-tip">Guest mode works right away without Google OAuth.</p>
     </div>
   </div>

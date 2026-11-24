@@ -94,18 +94,20 @@ const savedRole = localStorage.getItem("soundmesh_role") || "stereo";
 const savedOffsetMs = Number(localStorage.getItem("soundmesh_offset_ms") || "0") || 0;
 let currentUiMode = localStorage.getItem("soundmesh_ui_mode") || "minimal";
 let currentMinimalTheme = localStorage.getItem("soundmesh_minimal_theme") || "dark";
+let activeRoomPage = "stage";
+const expandedSpeakerIds = new Set();
 
 // ------------------------------------------------------------------
 // Dynamic Chameleon Album Color Engine
 // ------------------------------------------------------------------
 
 const CURATED_PALETTES = [
-  { r: 255, g: 107, b: 74, a2: "#ffb043" },  // Analog Vermilion
-  { r: 255, g: 149, b: 56, a2: "#ffd166" },  // Warm Amber Valve
-  { r: 24, g: 210, b: 146, a2: "#64dfdf" },  // Studio Mint
-  { r: 244, g: 93, b: 128, a2: "#ff9a76" },  // Rose Velvet
-  { r: 130, g: 115, b: 255, a2: "#ff7eb3" }, // Ultraviolet Stage
-  { r: 58, g: 168, b: 255, a2: "#72efdd" },  // Deep Vinyl Blue
+  { r: 255, g: 107, b: 74, a2: "#ffb043" },
+  { r: 255, g: 149, b: 56, a2: "#ffd166" },
+  { r: 24, g: 210, b: 146, a2: "#64dfdf" },
+  { r: 244, g: 93, b: 128, a2: "#ff9a76" },
+  { r: 130, g: 115, b: 255, a2: "#ff7eb3" },
+  { r: 58, g: 168, b: 255, a2: "#72efdd" },
 ];
 
 let activeAccentRgb = { r: 255, g: 107, b: 74 };
@@ -173,7 +175,6 @@ function extractPaletteFromImage(imgEl, fallbackSeed) {
       return;
     }
 
-    // Boost brightness slightly for dark console legibility
     const boost = (v) => Math.min(255, Math.max(65, Math.round(v * 1.08 + 12)));
     const r1 = boost(bestR);
     const g1 = boost(bestG);
@@ -201,8 +202,13 @@ const headerSyncDot = el("headerSyncDot");
 const headerSpeakerCount = el("headerSpeakerCount");
 const headerRttText = el("headerRttText");
 
+const layoutMenuWrap = el("layoutMenuWrap");
+const layoutMenuBtn = el("layoutMenuBtn");
+const layoutDropdownMenu = el("layoutDropdownMenu");
+const activeLayoutLabel = el("activeLayoutLabel");
 const uiModeSwitcher = el("uiModeSwitcher");
 const themeToggleBtn = el("themeToggleBtn");
+const themeToggleLabel = el("themeToggleLabel");
 const installPwaBtn = el("installPwaBtn");
 
 const roomTopControls = el("roomTopControls");
@@ -213,7 +219,14 @@ const guestControlToggle = el("guestControlToggle");
 const masterMuteBtn = el("masterMuteBtn");
 const masterVolumeSlider = el("masterVolumeSlider");
 const masterVolumeLabel = el("masterVolumeLabel");
+
 const navAccountArea = el("navAccountArea");
+const accountDropdownMenu = el("accountDropdownMenu");
+const navDropName = el("navDropName");
+const navDropMeta = el("navDropMeta");
+const navDropGoogleBtn = el("navDropGoogleBtn");
+const navDropYtBtn = el("navDropYtBtn");
+const navDropLogoutBtn = el("navDropLogoutBtn");
 
 const lobbyView = el("lobbyView");
 const publicHostBar = el("publicHostBar");
@@ -239,6 +252,10 @@ const upgradeGoogleBtn = el("upgradeGoogleBtn");
 const connectYtScopeBtn = el("connectYtScopeBtn");
 const lobbyLogoutBtn = el("lobbyLogoutBtn");
 
+const lobbyHubTabs = el("lobbyHubTabs");
+const hubTabJoin = el("hubTabJoin");
+const hubTabCreate = el("hubTabCreate");
+const hubTabBrowse = el("hubTabBrowse");
 const createRoomForm = el("createRoomForm");
 const createRoomNameInput = el("createRoomNameInput");
 const createRoomVisibility = el("createRoomVisibility");
@@ -251,17 +268,14 @@ const refreshRoomsBtn = el("refreshRoomsBtn");
 const roomsDirectoryGrid = el("roomsDirectoryGrid");
 
 const roomView = el("roomView");
-const drawerScrim = el("drawerScrim");
 const reactionFloatLayer = el("reactionFloatLayer");
 const connectionBanner = el("connectionBanner");
 const calibrationBanner = el("calibrationBanner");
 const stopCalibrationBtn = el("stopCalibrationBtn");
 
-const minimalMusicDrawerBtn = el("minimalMusicDrawerBtn");
-const minimalAudioDrawerBtn = el("minimalAudioDrawerBtn");
-const minimalLeaderSummary = el("minimalLeaderSummary");
-const panelSearch = el("panelSearch");
-const panelSpeakers = el("panelSpeakers");
+const desktopPageNav = el("desktopPageNav");
+const desktopSearchTab = el("desktopSearchTab");
+const queueTabBadge = el("queueTabBadge");
 const localAudioFileInput = el("localAudioFileInput");
 
 const unlockOverlay = el("unlockOverlay");
@@ -308,14 +322,21 @@ const playPauseBtn = el("playPauseBtn");
 const nextBtn = el("nextBtn");
 const repeatBtn = el("repeatBtn");
 const repeatOneBadge = el("repeatOneBadge");
+const reactMenuBtn = el("reactMenuBtn");
+const reactPopover = el("reactPopover");
+const stageOptionsBtn = el("stageOptionsBtn");
+const stageOptionsMenu = el("stageOptionsMenu");
 const toggleLyricsBtn = el("toggleLyricsBtn");
 const resyncAllBtn = el("resyncAllBtn");
 const loadRadioBtn = el("loadRadioBtn");
+const queueAutoRadioBtn = el("queueAutoRadioBtn");
 const reactionBar = el("reactionBar");
 const queueCountBadge = el("queueCountBadge");
 const clearQueueBtn = el("clearQueueBtn");
 const queueList = el("queueList");
 
+const speakerToolsMenuBtn = el("speakerToolsMenuBtn");
+const speakerToolsDropdown = el("speakerToolsDropdown");
 const autoStereoBtn = el("autoStereoBtn");
 const pingAllBtn = el("pingAllBtn");
 const leaderBannerName = el("leaderBannerName");
@@ -415,22 +436,106 @@ let deferredInstallPrompt = null;
 let lastLyricsVideoId = "";
 
 // ------------------------------------------------------------------
-// UI Mode, Theme & Sheet Choreography
+// Dropdown / Popover Choreography & Page Navigation
 // ------------------------------------------------------------------
 
-function syncDrawerScrim() {
-  const anyOpen =
-    currentUiMode === "minimal" &&
-    (panelSearch.classList.contains("drawer-open") ||
-      panelSpeakers.classList.contains("drawer-open"));
-  drawerScrim?.classList.toggle("hidden", !anyOpen);
+const POPOVER_PAIRS = [
+  [layoutMenuBtn, layoutDropdownMenu],
+  [el("navAccountChipBtn"), accountDropdownMenu],
+  [speakerToolsMenuBtn, speakerToolsDropdown],
+  [reactMenuBtn, reactPopover],
+  [stageOptionsBtn, stageOptionsMenu],
+];
+
+function closeAllPopovers(exceptMenu = null) {
+  POPOVER_PAIRS.forEach(([btn, menu]) => {
+    if (!menu || menu === exceptMenu) return;
+    menu.classList.add("hidden");
+    btn?.setAttribute("aria-expanded", "false");
+  });
+  accountDropdownMenu?.classList.add("hidden");
 }
 
-function closeAllDrawers() {
-  panelSearch.classList.remove("drawer-open");
-  panelSpeakers.classList.remove("drawer-open");
-  syncDrawerScrim();
+function togglePopover(triggerBtn, menuEl) {
+  if (!menuEl) return;
+  const willOpen = menuEl.classList.contains("hidden");
+  closeAllPopovers(willOpen ? menuEl : null);
+  menuEl.classList.toggle("hidden", !willOpen);
+  triggerBtn?.setAttribute("aria-expanded", willOpen ? "true" : "false");
 }
+
+layoutMenuBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePopover(layoutMenuBtn, layoutDropdownMenu);
+});
+
+speakerToolsMenuBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePopover(speakerToolsMenuBtn, speakerToolsDropdown);
+});
+
+reactMenuBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePopover(reactMenuBtn, reactPopover);
+});
+
+stageOptionsBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePopover(stageOptionsBtn, stageOptionsMenu);
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".dropdown-wrap")) {
+    closeAllPopovers();
+  }
+});
+
+globalThis.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeAllPopovers();
+    qrModal.classList.add("hidden");
+    passcodeModal.classList.add("hidden");
+    oauthSetupModal.classList.add("hidden");
+  }
+});
+
+function setActivePage(pageName) {
+  const valid = ["stage", "search", "queue", "speaker"];
+  if (!valid.includes(pageName)) pageName = "stage";
+  activeRoomPage = pageName;
+
+  document.body.classList.remove("page-stage", "page-search", "page-queue", "page-speaker");
+  document.body.classList.add(`page-${pageName}`);
+
+  desktopPageNav?.querySelectorAll(".page-pill").forEach((b) => {
+    b.classList.toggle("active", b.dataset.page === pageName);
+  });
+  mobileNav?.querySelectorAll(".mobile-nav-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.target === pageName);
+  });
+
+  document.querySelectorAll(".workspace > .panel").forEach((p) => {
+    p.classList.toggle("mobile-active", p.dataset.tab === pageName);
+  });
+}
+
+desktopPageNav?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-page]");
+  if (!btn) return;
+  setActivePage(btn.dataset.page || "stage");
+});
+
+mobileNav?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".mobile-nav-btn");
+  if (!btn) return;
+  setActivePage(btn.dataset.target || "stage");
+});
+
+const LAYOUT_NAMES = {
+  minimal: "Focus",
+  studio: "Studio",
+  party: "Stage",
+};
 
 function applyUiMode(mode) {
   if (!["minimal", "studio", "party"].includes(mode)) mode = "minimal";
@@ -444,10 +549,18 @@ function applyUiMode(mode) {
   uiModeSwitcher.querySelectorAll(".mode-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.uiMode === mode);
   });
+  if (activeLayoutLabel) activeLayoutLabel.textContent = LAYOUT_NAMES[mode] || "Focus";
   themeToggleBtn.classList.toggle("hidden", mode !== "minimal");
-  themeToggleBtn.innerHTML = svgIcon(currentMinimalTheme === "light" ? "moon" : "sun", 16);
+  if (themeToggleLabel) {
+    themeToggleLabel.textContent =
+      currentMinimalTheme === "light" ? "Switch to Obsidian Dark" : "Switch to Ceramic Light";
+  }
 
-  closeAllDrawers();
+  // In Split Studio, left pane shouldn't be stuck on "stage"
+  if (mode === "studio" && activeRoomPage === "stage") {
+    setActivePage("search");
+  }
+  closeAllPopovers();
 }
 
 uiModeSwitcher.addEventListener("click", (e) => {
@@ -460,33 +573,6 @@ themeToggleBtn.addEventListener("click", () => {
   currentMinimalTheme = currentMinimalTheme === "light" ? "dark" : "light";
   localStorage.setItem("soundmesh_minimal_theme", currentMinimalTheme);
   applyUiMode(currentUiMode);
-});
-
-minimalMusicDrawerBtn.addEventListener("click", () => {
-  panelSpeakers.classList.remove("drawer-open");
-  panelSearch.classList.toggle("drawer-open");
-  syncDrawerScrim();
-});
-
-minimalAudioDrawerBtn.addEventListener("click", () => {
-  panelSearch.classList.remove("drawer-open");
-  panelSpeakers.classList.toggle("drawer-open");
-  syncDrawerScrim();
-});
-
-drawerScrim?.addEventListener("click", closeAllDrawers);
-
-document.querySelectorAll("[data-close-drawer]").forEach((btn) => {
-  btn.addEventListener("click", closeAllDrawers);
-});
-
-globalThis.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    closeAllDrawers();
-    qrModal.classList.add("hidden");
-    passcodeModal.classList.add("hidden");
-    oauthSetupModal.classList.add("hidden");
-  }
 });
 
 // PWA Registration & Install Prompt
@@ -506,9 +592,9 @@ installPwaBtn.addEventListener("click", async () => {
   await deferredInstallPrompt.userChoice;
   deferredInstallPrompt = null;
   installPwaBtn.classList.add("hidden");
+  closeAllPopovers();
 });
 
-//Artwork onload chameleon color extraction
 nowArtwork.addEventListener("load", () => {
   const track = roomState?.playback?.track;
   if (track) {
@@ -592,7 +678,7 @@ wsClient = new WSClient({
 });
 
 // ------------------------------------------------------------------
-// Auth & Presets
+// Auth & Account Popover
 // ------------------------------------------------------------------
 
 async function refreshAuth() {
@@ -626,6 +712,12 @@ function renderAccountUI() {
     lobbySignedIn.classList.add("hidden");
     navAccountArea.innerHTML = `<button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Sign In</button>`;
     el("navGoogleSignInBtn")?.addEventListener("click", () => startGoogleLogin(true));
+
+    navDropName.textContent = "Not Signed In";
+    navDropMeta.textContent = "Guest or Google access";
+    navDropGoogleBtn.classList.remove("hidden");
+    navDropYtBtn.classList.add("hidden");
+    navDropLogoutBtn.classList.add("hidden");
     return;
   }
 
@@ -634,9 +726,9 @@ function renderAccountUI() {
   lobbySignedOut.classList.add("hidden");
   lobbySignedIn.classList.remove("hidden");
 
-  profileAvatarWrap.innerHTML = avatarHtml(currentUser.name, currentUser.avatar_url, "avatar-lg");
+  profileAvatarWrap.innerHTML = avatarHtml(currentUser.name, currentUser.avatar_url, "avatar-sm");
   profileNameText.textContent = currentUser.name;
-  profileEmailText.textContent = isGoogle ? currentUser.email : "Session Guest";
+  profileEmailText.textContent = isGoogle ? currentUser.email : "Guest Session";
   profileYtBadge.classList.toggle("hidden", !(isGoogle && currentUser.has_youtube_scope));
   upgradeGoogleBtn.classList.toggle("hidden", isGoogle);
   connectYtScopeBtn.classList.toggle(
@@ -645,16 +737,39 @@ function renderAccountUI() {
   );
 
   navAccountArea.innerHTML = `
-    <div class="account-chip">
+    <button id="navAccountChipBtn" class="account-chip" aria-haspopup="true" aria-expanded="false">
       ${avatarHtml(currentUser.name, currentUser.avatar_url, "avatar-sm")}
       <span>${escapeHtml(currentUser.name)}</span>
-    </div>
-    ${!isGoogle ? `<button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Google</button>` : ""}
-    <button id="navLogoutBtn" class="btn btn-ghost btn-xs">Out</button>
+      <svg class="svg-i" width="12" height="12"><use href="#i-chevron"/></svg>
+    </button>
   `;
-  el("navGoogleSignInBtn")?.addEventListener("click", () => startGoogleLogin(true));
-  el("navLogoutBtn")?.addEventListener("click", logoutUser);
+  el("navAccountChipBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePopover(el("navAccountChipBtn"), accountDropdownMenu);
+  });
+
+  navDropName.textContent = currentUser.name;
+  navDropMeta.textContent = isGoogle ? currentUser.email : "Guest Session";
+  navDropGoogleBtn.classList.toggle("hidden", isGoogle);
+  navDropYtBtn.classList.toggle(
+    "hidden",
+    !(isGoogle && !currentUser.has_youtube_scope && authConfig.youtube_scope_enabled)
+  );
+  navDropLogoutBtn.classList.remove("hidden");
 }
+
+navDropGoogleBtn?.addEventListener("click", () => {
+  closeAllPopovers();
+  startGoogleLogin(true);
+});
+navDropYtBtn?.addEventListener("click", () => {
+  closeAllPopovers();
+  startGoogleLogin(true);
+});
+navDropLogoutBtn?.addEventListener("click", () => {
+  closeAllPopovers();
+  void logoutUser();
+});
 
 async function logoutUser() {
   await apiFetch("/api/auth/logout", { method: "POST" });
@@ -702,8 +817,19 @@ guestLoginForm.addEventListener("submit", async (e) => {
 });
 
 // ------------------------------------------------------------------
-// Lobby & Multi-Room Routing
+// Tabbed Lobby Hub & Multi-Room Routing
 // ------------------------------------------------------------------
+
+lobbyHubTabs?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-hub-tab]");
+  if (!btn) return;
+  const tab = btn.dataset.hubTab;
+  lobbyHubTabs.querySelectorAll(".tab-chip").forEach((b) => b.classList.toggle("active", b === btn));
+  hubTabJoin.classList.toggle("hidden", tab !== "join");
+  hubTabCreate.classList.toggle("hidden", tab !== "create");
+  hubTabBrowse.classList.toggle("hidden", tab !== "browse");
+  if (tab === "browse") refreshRoomsDirectory();
+});
 
 async function ensureSignedInForLobbyAction() {
   if (currentUser) return true;
@@ -737,7 +863,7 @@ function renderRoomsDirectory() {
     roomsDirectoryGrid.innerHTML = `<div class="empty-state compact"><p>${
       lobbyTab === "mine"
         ? "No rooms created under this profile yet."
-        : "No public rooms on-air right now — launch the first one above."
+        : "No public rooms on-air right now."
     }</p></div>`;
     return;
   }
@@ -746,7 +872,7 @@ function renderRoomsDirectory() {
     .map((r) => {
       const playingIndicator = r.now_playing_title
         ? `<span class="eq-mini" aria-hidden="true"><i></i><i></i><i></i></span>${escapeHtml(r.now_playing_title)} — ${escapeHtml(r.now_playing_artist)}`
-        : "Standby · Ready for tracks";
+        : "Standby · Ready";
       return `
       <div class="room-dir-card">
         <div class="room-dir-top">
@@ -764,7 +890,7 @@ function renderRoomsDirectory() {
           <button class="btn btn-primary btn-xs" data-join-code="${escapeHtml(r.code)}" data-has-pass="${r.has_passcode ? "1" : "0"}">Tune In</button>
           ${
             currentUser && r.owner_user_id === currentUser.id
-              ? `<button class="btn btn-ghost btn-xs" data-delete-code="${escapeHtml(r.code)}">Close Room</button>`
+              ? `<button class="btn btn-ghost btn-xs" data-delete-code="${escapeHtml(r.code)}">Close</button>`
               : ""
           }
         </div>
@@ -885,7 +1011,7 @@ passcodeModalForm.addEventListener("submit", async (e) => {
     body: JSON.stringify({ passcode: pass }),
   });
   if (vResp.status === 429) {
-    passcodeModalError.textContent = "Too many attempts. Wait 60s and retry.";
+    passcodeModalError.textContent = "Too many attempts. Wait 60s.";
     passcodeModalError.classList.remove("hidden");
     return;
   }
@@ -915,9 +1041,10 @@ function enterRoom(roomCode, joinTicket = "", pushHistory = true) {
   roomView.classList.remove("hidden");
   roomHeaderCluster.classList.remove("hidden");
   roomTopControls.classList.remove("hidden");
-  uiModeSwitcher.classList.remove("hidden");
+  layoutMenuWrap.classList.remove("hidden");
   document.body.classList.add("in-room");
   applyUiMode(currentUiMode);
+  setActivePage(currentUiMode === "studio" ? "search" : "stage");
 
   const suggestedName =
     localStorage.getItem("soundmesh_speaker_name") ||
@@ -936,8 +1063,6 @@ function enterRoom(roomCode, joinTicket = "", pushHistory = true) {
   };
   if (activeRoomJoinTicket) wsParams.join_ticket = activeRoomJoinTicket;
   wsClient.connect(cleanCode, wsParams);
-
-  setMobileTab("stage");
 }
 
 function navigateToLobby(pushHistory = true) {
@@ -947,13 +1072,12 @@ function navigateToLobby(pushHistory = true) {
   roomState = null;
   connectionBanner.classList.add("hidden");
   document.body.classList.remove("in-room", "is-playing");
-  closeAllDrawers();
+  closeAllPopovers();
 
   roomView.classList.add("hidden");
   roomHeaderCluster.classList.add("hidden");
   roomTopControls.classList.add("hidden");
-  uiModeSwitcher.classList.add("hidden");
-  themeToggleBtn.classList.add("hidden");
+  layoutMenuWrap.classList.add("hidden");
   lobbyView.classList.remove("hidden");
 
   if (pushHistory && location.pathname !== "/") {
@@ -1068,18 +1192,18 @@ function handleServerMessage(msg) {
     case "leader_changed":
       showToast(
         msg.reason === "auto_handoff"
-          ? `${msg.leader_name} took over as DJ Leader`
-          : `${msg.leader_name} is now DJ Leader`
+          ? `${msg.leader_name} took over as DJ`
+          : `${msg.leader_name} is now DJ`
       );
       break;
     case "leader_request":
-      if (msg.request) showToast(`${msg.request.user_name} asked for the DJ crown`);
+      if (msg.request) showToast(`${msg.request.user_name} asked for DJ control`);
       break;
     case "leader_request_declined":
       showToast(`DJ request declined by ${msg.by || "Leader"}`);
       break;
     case "room_closed":
-      showToast("Room was closed by the host.");
+      showToast("Room closed by host.");
       navigateToLobby();
       break;
     default:
@@ -1089,6 +1213,7 @@ function handleServerMessage(msg) {
 
 function scheduleGaplessPrefetch() {
   if (!roomState || !audioEngine.unlocked) return;
+  if (roomState.playback?.use_yt_iframe) return;
   const q = roomState.queue || [];
   const curIdx = roomState.playback?.queue_index ?? -1;
   if (roomState.playback?.status === "playing" && curIdx >= 0 && curIdx + 1 < q.length) {
@@ -1181,7 +1306,7 @@ function renderTopBar() {
   const volPct = Math.round((roomState.master_volume ?? 1) * 100);
   masterVolumeSlider.value = String(volPct);
   masterVolumeLabel.textContent = `${volPct}%`;
-  masterMuteBtn.innerHTML = svgIcon(roomState.master_muted ? "mute" : "vol", 16);
+  masterMuteBtn.innerHTML = svgIcon(roomState.master_muted ? "mute" : "vol", 15);
 }
 
 function renderLeaderBanner() {
@@ -1190,7 +1315,6 @@ function renderLeaderBanner() {
   const leaderLabel = leader ? leader.user_name || leader.name : "Awaiting DJ…";
   leaderBannerName.textContent = leaderLabel;
   leaderBannerDevice.textContent = leader ? `· ${leader.name}` : "";
-  minimalLeaderSummary.textContent = `DJ: ${leaderLabel} · ${(roomState.speakers || []).length} Nodes`;
 
   const alreadyRequested = (roomState.pending_leader_requests || []).some(
     (r) => r.speaker_id === mySpeakerId
@@ -1221,7 +1345,7 @@ function renderLeaderRequests() {
       <div class="leader-req-row">
         <span><strong>${escapeHtml(r.user_name)}</strong> (${escapeHtml(r.name)}) wants DJ control</span>
         <div class="leader-req-actions">
-          <button class="btn btn-primary btn-xs" data-approve-req="${escapeHtml(r.speaker_id)}">Pass Crown</button>
+          <button class="btn btn-primary btn-xs" data-approve-req="${escapeHtml(r.speaker_id)}">Pass DJ</button>
           <button class="btn btn-ghost btn-xs" data-decline-req="${escapeHtml(r.speaker_id)}">Dismiss</button>
         </div>
       </div>`
@@ -1235,11 +1359,12 @@ function renderPermissionsUI() {
   [
     playPauseBtn, prevBtn, nextBtn, shuffleBtn, repeatBtn, seekSlider,
     clearQueueBtn, autoStereoBtn, calibrateToggleBtn, masterVolumeSlider,
-    masterMuteBtn, resyncAllBtn, loadRadioBtn,
+    masterMuteBtn, resyncAllBtn, loadRadioBtn, queueAutoRadioBtn,
   ].forEach((c) => {
     if (c) c.disabled = !allowed;
   });
   if (searchSubmitBtn) searchSubmitBtn.disabled = !canSearchOrQueue;
+  if (desktopSearchTab) desktopSearchTab.style.display = canSearchOrQueue ? "inline-flex" : "none";
   if (mobileSearchNav) mobileSearchNav.style.display = canSearchOrQueue ? "flex" : "none";
   if (mobileQueueNav) mobileQueueNav.style.display = "flex";
 }
@@ -1280,8 +1405,8 @@ function renderPlaybackUI() {
   } else {
     nowTitle.textContent = "Ready to Spin";
     nowArtist.textContent = myIsLeader
-      ? "Open Crate & Search, link your Library, or drop a local audio file"
-      : "Phase-locked to DJ Leader — standing by for next track";
+      ? "Open Music & Library to choose a song"
+      : "Phase-locked to DJ Leader — waiting for track";
     nowArtwork.classList.add("hidden");
     nowArtworkPlaceholder.classList.remove("hidden");
     stageBackdrop.style.backgroundImage = "none";
@@ -1289,7 +1414,7 @@ function renderPlaybackUI() {
 
   loadingOverlay.classList.toggle("hidden", pb.status !== "loading");
   loadingPhaseText.textContent =
-    pb.loading_phase === "buffering" ? "Phase-locking nodes…" : "Fetching master stream…";
+    pb.loading_phase === "buffering" ? "Syncing speakers…" : "Loading stream…";
 
   if (pb.loading_error) {
     nowError.textContent = pb.loading_error;
@@ -1314,9 +1439,10 @@ function renderQueueUI() {
   const q = roomState.queue || [];
   const curIdx = roomState.playback?.queue_index ?? -1;
   queueCountBadge.textContent = String(q.length);
+  if (queueTabBadge) queueTabBadge.textContent = String(q.length);
 
   if (q.length === 0) {
-    queueList.innerHTML = `<div class="empty-state compact"><p>Queue is open — add songs or upvote tracks so crowd favorites play next.</p></div>`;
+    queueList.innerHTML = `<div class="empty-state compact"><p>Queue is empty — pick a song in Music &amp; Library or tap <strong>Auto Radio</strong>.</p></div>`;
     return;
   }
 
@@ -1344,13 +1470,13 @@ function renderQueueUI() {
         <div class="track-actions">
           ${
             isUpcoming
-              ? `<button class="upvote-btn ${voted ? "voted" : ""}" data-action="upvote" data-idx="${idx}" title="Upvote track">▲ ${votes.length}</button>`
+              ? `<button class="upvote-btn ${voted ? "voted" : ""}" data-action="upvote" data-idx="${idx}" title="Upvote">▲ ${votes.length}</button>`
               : ""
           }
           ${
             allowed
-              ? `<button class="icon-btn" data-action="up" data-idx="${idx}" title="Move up">↑</button>
-                 <button class="icon-btn" data-action="down" data-idx="${idx}" title="Move down">↓</button>
+              ? `<button class="icon-btn" data-action="up" data-idx="${idx}" title="Up">↑</button>
+                 <button class="icon-btn" data-action="down" data-idx="${idx}" title="Down">↓</button>
                  <button class="icon-btn" data-action="remove" data-idx="${idx}" title="Remove">✕</button>`
               : ""
           }
@@ -1424,59 +1550,64 @@ function buildSpeakerCardHtml(s) {
   const editable = isSelf || canControlRoom();
   const disabledAttr = editable ? "" : "disabled";
   const showMakeLeader = canAssignLeader() && !s.is_leader;
+  const isExpanded = expandedSpeakerIds.has(s.id);
 
   return `
     <div class="speaker-card ${isSelf ? "is-self" : ""} ${s.is_leader ? "is-leader-card" : ""}" data-speaker-id="${escapeHtml(s.id)}">
-      <div class="speaker-top">
+      <div class="speaker-summary-row">
         <div class="speaker-id-group">
           ${avatarHtml(s.user_name || s.name, s.user_avatar, "avatar-sm")}
           <div class="speaker-name-wrap">
             <input class="speaker-name-input" type="text" data-field="name" value="${escapeHtml(s.name)}" ${disabledAttr} />
-            <span class="speaker-user-sub">${escapeHtml(s.user_name || "Guest")}${s.auth_provider === "google" ? " · Google" : ""}</span>
+            <span class="speaker-user-sub">${escapeHtml(s.user_name || "Guest")}${isSelf ? " · You" : ""}</span>
           </div>
         </div>
-        <div class="speaker-badges-row">
+        <div class="speaker-row-actions">
           ${s.is_leader ? '<span class="role-pill leader">DJ</span>' : ""}
-          ${s.is_owner ? '<span class="role-pill owner">Host</span>' : ""}
-          ${isSelf ? '<span class="role-pill">You</span>' : ""}
           <span class="sync-badge ${s.sync_status}" data-role="sync-badge">${formatSyncStatus(s.sync_status)}</span>
+          <button class="icon-btn" data-action="toggle-mute" ${disabledAttr} title="Quick Mute">${svgIcon(s.muted ? "mute" : "vol", 15)}</button>
+          <button class="btn btn-outline btn-xs" data-action="toggle-tune" aria-expanded="${isExpanded}">
+            ${svgIcon("sliders", 12)}
+            <span>${isExpanded ? "Done" : "Tune ▾"}</span>
+          </button>
         </div>
       </div>
 
-      <div class="speaker-telemetry">
-        <span data-role="telemetry">RTT ${Math.round(s.rtt_ms)}ms · Δ ${s.drift_ms >= 0 ? "+" : ""}${s.drift_ms.toFixed(1)}ms</span>
-        <div class="speaker-actions-inline">
-          ${showMakeLeader ? `<button class="btn btn-accent btn-xs" data-action="make-leader">Pass DJ</button>` : ""}
-          ${editable ? `<button class="btn btn-ghost btn-xs" data-action="sweep" title="Emit 2–7kHz acoustic sweep on this speaker">Sweep</button>` : ""}
-          <button class="btn btn-ghost btn-xs" data-action="ping" title="Identify speaker with chime">Chime</button>
+      <div class="speaker-tune-drawer ${isExpanded ? "" : "hidden"}">
+        <div class="speaker-controls">
+          <select data-field="role" ${disabledAttr}>
+            <option value="stereo" ${s.role === "stereo" ? "selected" : ""}>Stereo</option>
+            <option value="left" ${s.role === "left" ? "selected" : ""}>Left (L)</option>
+            <option value="right" ${s.role === "right" ? "selected" : ""}>Right (R)</option>
+            <option value="mono" ${s.role === "mono" ? "selected" : ""}>Mono</option>
+            <option value="subwoofer" ${s.role === "subwoofer" ? "selected" : ""}>Sub</option>
+          </select>
+          <input type="range" min="0" max="100" value="${Math.round(s.volume * 100)}" data-field="volume" ${disabledAttr} aria-label="Speaker volume" />
         </div>
-      </div>
 
-      <div class="speaker-controls">
-        <select data-field="role" ${disabledAttr}>
-          <option value="stereo" ${s.role === "stereo" ? "selected" : ""}>Stereo</option>
-          <option value="left" ${s.role === "left" ? "selected" : ""}>Left (L)</option>
-          <option value="right" ${s.role === "right" ? "selected" : ""}>Right (R)</option>
-          <option value="mono" ${s.role === "mono" ? "selected" : ""}>Mono</option>
-          <option value="subwoofer" ${s.role === "subwoofer" ? "selected" : ""}>Sub</option>
-        </select>
-        <button class="icon-btn" data-action="toggle-mute" ${disabledAttr} aria-label="Mute speaker">${svgIcon(s.muted ? "mute" : "vol", 15)}</button>
-        <input type="range" min="0" max="100" value="${Math.round(s.volume * 100)}" data-field="volume" ${disabledAttr} aria-label="Speaker volume" />
-      </div>
+        <div class="speaker-offset-row">
+          <span>Trim:</span>
+          <button class="nudge-btn" data-action="nudge" data-delta="-5" ${disabledAttr}>−5</button>
+          <input type="range" min="-500" max="500" value="${Math.round(s.offset_ms)}" data-field="offset_ms" ${disabledAttr} aria-label="Sync offset ms" />
+          <button class="nudge-btn" data-action="nudge" data-delta="5" ${disabledAttr}>+5</button>
+          <span class="mono-sm" data-role="offset-label">${Math.round(s.offset_ms)}ms</span>
+        </div>
 
-      <div class="speaker-offset-row">
-        <span>Trim:</span>
-        <button class="nudge-btn" data-action="nudge" data-delta="-5" ${disabledAttr}>−5</button>
-        <input type="range" min="-500" max="500" value="${Math.round(s.offset_ms)}" data-field="offset_ms" ${disabledAttr} aria-label="Sync offset ms" />
-        <button class="nudge-btn" data-action="nudge" data-delta="5" ${disabledAttr}>+5</button>
-        <span class="mono-sm" data-role="offset-label">${Math.round(s.offset_ms)}ms</span>
+        <div class="speaker-telemetry">
+          <span data-role="telemetry">RTT ${Math.round(s.rtt_ms)}ms · Δ ${s.drift_ms >= 0 ? "+" : ""}${s.drift_ms.toFixed(1)}ms</span>
+          <div class="speaker-actions-inline">
+            ${showMakeLeader ? `<button class="btn btn-accent btn-xs" data-action="make-leader">Pass DJ</button>` : ""}
+            ${editable ? `<button class="btn btn-ghost btn-xs" data-action="sweep">Sweep</button>` : ""}
+            <button class="btn btn-ghost btn-xs" data-action="ping">Chime</button>
+          </div>
+        </div>
       </div>
     </div>
   `;
 }
 
 // ------------------------------------------------------------------
-// DSP Tabs, Live EQ Response Curve, 1-Tap Sonar Sync & 2D Stage
+// DSP Tabs, Live EQ Curve, 1-Tap Sonar Sync & 2D Stage
 // ------------------------------------------------------------------
 
 speakerSubTabs.addEventListener("click", (e) => {
@@ -1630,7 +1761,7 @@ spatialPresetsRow?.addEventListener("click", (e) => {
 const PRESET_LABELS = {
   flat: "REFERENCE FLAT",
   party_bass: "CLUB SUB",
-  hostel_boost: "ROOM LOUDNESS",
+  hostel_boost: "LOUDNESS",
   vocal: "CRISP VOCAL",
   late_night: "MIDNIGHT SOFT",
 };
@@ -1669,7 +1800,7 @@ eqBandsContainer.addEventListener("input", (e) => {
   if (!inp) return;
   const bands = [0, 1, 2, 3, 4].map((i) => Number(eqBandsContainer.querySelector(`input[data-band="${i}"]`)?.value || 0));
   audioEngine.setEq({ eq_bands: bands });
-  if (eqActivePresetLabel) eqActivePresetLabel.textContent = "CUSTOM CURVE";
+  if (eqActivePresetLabel) eqActivePresetLabel.textContent = "CUSTOM";
   syncEqSlidersUI("", bands);
 });
 
@@ -1680,9 +1811,7 @@ eqBandsContainer.addEventListener("change", () => {
 
 // 1-Tap Automated Acoustic Sonar Calibration
 micAutoCalBtn.addEventListener("click", async () => {
-  if (!audioEngine.unlocked) {
-    completeUnlock(false);
-  }
+  if (!audioEngine.unlocked) completeUnlock(false);
   micAutoCalBtn.disabled = true;
   sonarCard?.classList.add("sonar-listening");
 
@@ -1700,17 +1829,15 @@ micAutoCalBtn.addEventListener("click", async () => {
         wsClient.send({ type: "set_calibration", active: true });
         await sleep(850);
       } else {
-        throw new Error("Ask the DJ Leader to tap Sync Pulse first, then retry.");
+        throw new Error("Ask the DJ to enable Sync Pulse in Room Tools first.");
       }
     }
 
-    // If other speakers are active in the room, mute this device's own speaker briefly
-    // so the mic cleanly measures the room's acoustic arrival without self-masking.
     if (otherUnlockedSpeakers > 0 && !prevMuted) {
       audioEngine.setVolumes({ speakerMuted: true });
     }
 
-    acousticResultText.textContent = "Listening via microphone for 3.2s — hold steady…";
+    acousticResultText.textContent = "Listening via microphone for 3.2s…";
     const res = await audioEngine.runMicAutoCalibrate();
 
     audioEngine.setOffsetMs(res.suggestedOffsetMs);
@@ -1741,11 +1868,11 @@ micAutoCalBtn.addEventListener("click", async () => {
 emitChirpBtn.addEventListener("click", () => {
   if (!audioEngine.unlocked) completeUnlock(false);
   wsClient.send({ type: "acoustic_chirp", target_id: mySpeakerId });
-  acousticResultText.textContent = "Sweeping 2 kHz → 7 kHz test tone on this speaker…";
+  acousticResultText.textContent = "Sweeping 2 kHz → 7 kHz test tone…";
 });
 
 // ------------------------------------------------------------------
-// Music Search, Personal Library, Local Upload & Lyrics
+// Music Search, Personal Library, Local Upload & Auto Radio
 // ------------------------------------------------------------------
 
 async function loadPersonalLibrary() {
@@ -1760,7 +1887,7 @@ async function loadPersonalLibrary() {
     searchResults.innerHTML = `
       <div class="empty-state">
         <div class="empty-glyph">${svgIcon("lyrics", 26)}</div>
-        <p>Link your Google account with YouTube access to pull your personal playlists and Liked Music.</p>
+        <p>Link your Google account with YouTube access to load your personal playlists and Liked Music.</p>
         <button id="inlineConnectYtBtn" class="btn btn-primary btn-sm" style="margin-top:0.6rem">Connect Google Library</button>
       </div>
     `;
@@ -1864,7 +1991,7 @@ function renderSearchResults() {
           }</div>
         </div>
         <div class="track-actions">
-          ${canPlay ? `<button class="btn btn-primary btn-xs" data-action="play-now" data-idx="${idx}">Spin</button>` : ""}
+          ${canPlay ? `<button class="btn btn-primary btn-xs" data-action="play-now" data-idx="${idx}">Play</button>` : ""}
           <button class="btn btn-outline btn-xs" data-action="queue-add" data-idx="${idx}">+Q</button>
         </div>
       </div>`
@@ -1890,7 +2017,7 @@ function showCollectionView(title, subtitle, tracks) {
           <div class="track-sub">${escapeHtml(t.artist)} · ${formatTime(t.duration_sec)}</div>
         </div>
         <div class="track-actions">
-          ${canPlay ? `<button class="btn btn-primary btn-xs" data-action="play-now" data-idx="${idx}">Spin</button>` : ""}
+          ${canPlay ? `<button class="btn btn-primary btn-xs" data-action="play-now" data-idx="${idx}">Play</button>` : ""}
           <button class="btn btn-outline btn-xs" data-action="queue-add" data-idx="${idx}">+Q</button>
         </div>
       </div>`
@@ -1915,6 +2042,42 @@ async function openCollection(col, isPersonalLibrary = false) {
     searchStatus.textContent = `Failed loading ${col.title}: ${err.message}`;
   }
 }
+
+async function triggerAutoRadio() {
+  const curTrack = roomState?.playback?.track || roomState?.queue?.[0];
+  if (!curTrack || !curTrack.video_id || curTrack.video_id.startsWith("local_")) {
+    showToast("Play a YouTube track first so Auto Radio can match its vibe.");
+    return;
+  }
+  closeAllPopovers();
+  if (loadRadioBtn) loadRadioBtn.disabled = true;
+  if (queueAutoRadioBtn) queueAutoRadioBtn.disabled = true;
+  showToast(`Building Auto Radio mix from "${curTrack.title}"…`);
+  try {
+    const qs = new URLSearchParams({
+      title: curTrack.title || "",
+      artist: curTrack.artist || "",
+    });
+    const resp = await apiFetch(`/api/related/${encodeURIComponent(curTrack.video_id)}?${qs.toString()}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Radio request failed");
+    if (Array.isArray(data.tracks) && data.tracks.length > 0) {
+      wsClient.send({ type: "add_to_queue", tracks: data.tracks, play_if_idle: true });
+      showToast(`Added ${data.tracks.length} Auto Radio tracks`);
+    } else {
+      showToast("No related songs found for this track.");
+    }
+  } catch (err) {
+    showToast(`Auto Radio failed: ${err.message}`);
+  } finally {
+    const allowed = canControlRoom();
+    if (loadRadioBtn) loadRadioBtn.disabled = !allowed;
+    if (queueAutoRadioBtn) queueAutoRadioBtn.disabled = !allowed;
+  }
+}
+
+loadRadioBtn?.addEventListener("click", triggerAutoRadio);
+queueAutoRadioBtn?.addEventListener("click", triggerAutoRadio);
 
 localAudioFileInput.addEventListener("change", async () => {
   const file = localAudioFileInput.files?.[0];
@@ -1946,7 +2109,7 @@ localAudioFileInput.addEventListener("change", async () => {
 
 async function fetchAndRenderLyrics(videoId) {
   if (!videoId || videoId.startsWith("local_")) {
-    lyricsBody.textContent = "Lyrics are not embedded in local audio uploads.";
+    lyricsBody.textContent = "Lyrics unavailable for local uploads.";
     return;
   }
   lastLyricsVideoId = videoId;
@@ -1954,13 +2117,14 @@ async function fetchAndRenderLyrics(videoId) {
   try {
     const resp = await apiFetch(`/api/lyrics/${encodeURIComponent(videoId)}`);
     const data = await resp.json();
-    lyricsBody.textContent = data.available && data.lyrics ? data.lyrics : "No synced lyrics found for this track.";
+    lyricsBody.textContent = data.available && data.lyrics ? data.lyrics : "No synced lyrics found.";
   } catch {
     lyricsBody.textContent = "Unable to load lyrics right now.";
   }
 }
 
 toggleLyricsBtn.addEventListener("click", () => {
+  closeAllPopovers();
   const willOpen = lyricsPanel.classList.contains("hidden");
   lyricsPanel.classList.toggle("hidden", !willOpen);
   if (willOpen && roomState?.playback?.track?.video_id) {
@@ -2014,6 +2178,7 @@ collectionPlayAllBtn.addEventListener("click", () => {
   if (!currentCollectionTracks.length) return;
   wsClient.send({ type: "clear_queue" });
   wsClient.send({ type: "add_to_queue", tracks: currentCollectionTracks, play_if_idle: true });
+  if (currentUiMode === "minimal") setActivePage("stage");
 });
 
 collectionQueueAllBtn.addEventListener("click", () => {
@@ -2042,7 +2207,7 @@ searchResults.addEventListener("click", (e) => {
 
   if (actionBtn.dataset.action === "play-now") {
     wsClient.send({ type: "play_now", track });
-    closeAllDrawers();
+    if (currentUiMode === "minimal") setActivePage("stage");
   } else if (actionBtn.dataset.action === "queue-add") {
     wsClient.send({ type: "add_to_queue", tracks: [track], play_if_idle: true });
     showToast(`Queued "${track.title}"`);
@@ -2056,8 +2221,9 @@ playPauseBtn.addEventListener("click", () => {
 prevBtn.addEventListener("click", () => wsClient.send({ type: "prev" }));
 nextBtn.addEventListener("click", () => wsClient.send({ type: "next" }));
 resyncAllBtn.addEventListener("click", () => {
+  closeAllPopovers();
   wsClient.send({ type: "force_resync" });
-  showToast("Re-aligning phase across all nodes…");
+  showToast("Tightening sync across speakers…");
 });
 shuffleBtn.addEventListener("click", () => wsClient.send({ type: "set_shuffle", enabled: !roomState?.shuffle }));
 repeatBtn.addEventListener("click", () => {
@@ -2074,26 +2240,11 @@ seekSlider.addEventListener("change", () => {
   wsClient.send({ type: "seek", position_sec: Number(seekSlider.value) });
 });
 
-loadRadioBtn.addEventListener("click", async () => {
-  const vid = roomState?.playback?.track?.video_id;
-  if (!vid || vid.startsWith("local_")) return;
-  loadRadioBtn.disabled = true;
-  try {
-    const resp = await apiFetch(`/api/related/${encodeURIComponent(vid)}`);
-    const data = await resp.json();
-    if (Array.isArray(data.tracks) && data.tracks.length > 0) {
-      wsClient.send({ type: "add_to_queue", tracks: data.tracks, play_if_idle: false });
-      showToast(`Added ${data.tracks.length} Auto-Radio tracks`);
-    }
-  } finally {
-    loadRadioBtn.disabled = !canControlRoom();
-  }
-});
-
 reactionBar.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-emoji]");
   if (!btn) return;
   wsClient.send({ type: "send_reaction", emoji: btn.dataset.emoji });
+  closeAllPopovers();
 });
 
 clearQueueBtn.addEventListener("click", () => wsClient.send({ type: "clear_queue" }));
@@ -2124,10 +2275,19 @@ muteMeControllerToggle.addEventListener("change", () => {
   wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { muted: muteMeControllerToggle.checked } });
 });
 
-calibrateToggleBtn.addEventListener("click", () => wsClient.send({ type: "set_calibration", active: !roomState?.calibration?.active }));
+calibrateToggleBtn.addEventListener("click", () => {
+  closeAllPopovers();
+  wsClient.send({ type: "set_calibration", active: !roomState?.calibration?.active });
+});
 stopCalibrationBtn.addEventListener("click", () => wsClient.send({ type: "set_calibration", active: false }));
-autoStereoBtn.addEventListener("click", () => wsClient.send({ type: "auto_assign_stereo" }));
-pingAllBtn.addEventListener("click", () => wsClient.send({ type: "identify_speaker", target_id: "all" }));
+autoStereoBtn.addEventListener("click", () => {
+  closeAllPopovers();
+  wsClient.send({ type: "auto_assign_stereo" });
+});
+pingAllBtn.addEventListener("click", () => {
+  closeAllPopovers();
+  wsClient.send({ type: "identify_speaker", target_id: "all" });
+});
 
 requestLeaderBtn.addEventListener("click", () => {
   wsClient.send({ type: "request_leader" });
@@ -2213,6 +2373,19 @@ speakerList.addEventListener("click", (e) => {
   const targetId = card.dataset.speakerId;
   const action = btn.dataset.action;
 
+  if (action === "toggle-tune") {
+    const drawer = card.querySelector(".speaker-tune-drawer");
+    if (!drawer) return;
+    const willOpen = drawer.classList.contains("hidden");
+    drawer.classList.toggle("hidden", !willOpen);
+    if (willOpen) expandedSpeakerIds.add(targetId);
+    else expandedSpeakerIds.delete(targetId);
+    btn.setAttribute("aria-expanded", String(willOpen));
+    const lbl = btn.querySelector("span");
+    if (lbl) lbl.textContent = willOpen ? "Done" : "Tune ▾";
+    return;
+  }
+
   if (action === "make-leader") wsClient.send({ type: "assign_leader", target_id: targetId });
   else if (action === "ping") wsClient.send({ type: "identify_speaker", target_id: targetId });
   else if (action === "sweep") wsClient.send({ type: "acoustic_chirp", target_id: targetId });
@@ -2295,25 +2468,6 @@ copyUrlBtn.addEventListener("click", async () => {
   } catch {
     qrUrlInput.select();
   }
-});
-
-// Mobile Navigation
-function setMobileTab(tabName) {
-  mobileNav.querySelectorAll(".mobile-nav-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.target === tabName);
-  });
-  document.body.classList.remove("mobile-tab-speaker", "mobile-tab-stage", "mobile-tab-search", "mobile-tab-queue");
-  document.body.classList.add(`mobile-tab-${tabName}`);
-  document.querySelectorAll(".workspace > .panel").forEach((p) => {
-    const match = p.dataset.tab === tabName || (tabName === "queue" && p.dataset.tab === "stage");
-    p.classList.toggle("mobile-active", match);
-  });
-}
-
-mobileNav.addEventListener("click", (e) => {
-  const btn = e.target.closest(".mobile-nav-btn");
-  if (!btn) return;
-  setMobileTab(btn.dataset.target || "stage");
 });
 
 // ------------------------------------------------------------------
@@ -2420,7 +2574,6 @@ function animationLoop() {
     const hasSignal = audioEngine.getFrequencyData(freqBins);
     const { r, g, b } = activeAccentRgb;
 
-    // 1. Mirrored Center-Symmetry Harmonic Spectrum
     if (vizCtx) {
       const w = visualizerCanvas.width;
       const h = visualizerCanvas.height;
@@ -2454,7 +2607,6 @@ function animationLoop() {
       }
     }
 
-    // 2. 360° Radial Concert Halo around Turntable / Stage Artwork
     if (haloCtx && haloCanvas) {
       const hw = haloCanvas.width;
       const hh = haloCanvas.height;
@@ -2462,7 +2614,7 @@ function animationLoop() {
 
       const cx = hw / 2;
       const cy = hh / 2;
-      const baseR = currentUiMode === "party" ? 104 : 80;
+      const baseR = currentUiMode === "party" ? 102 : 84;
       const rays = 56;
 
       haloCtx.lineCap = "round";

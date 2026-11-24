@@ -91,6 +91,14 @@ export class SyncAudioEngine {
     this._mediaSource = null;
     this._streamingReadyUrl = null;
 
+    // Direct YouTube IFrame Fallback Sync Engine (used when cloud servers are yt-dlp throttled)
+    this._ytPlayer = null;
+    this._ytReady = false;
+    this._ytLoadedVideoId = null;
+    this._ytApiPromise = null;
+    this._ytPlayerPromise = null;
+    this._ytStartTimer = null;
+
     // Playback state mirror
     this.playbackState = null;
     this.syncStatus = "needs_unlock";
@@ -137,6 +145,7 @@ export class SyncAudioEngine {
     this._requestWakeLock();
     this._registerMediaSessionHandlers();
     this._startLoops();
+    void this._ensureYtPlayer();
 
     if (this.playbackState) {
       this.applyPlaybackState(this.playbackState, true);
@@ -376,6 +385,28 @@ export class SyncAudioEngine {
     this.outputGain.gain.cancelScheduledValues(now);
     if (immediate) this.outputGain.gain.setValueAtTime(effective, now);
     else this.outputGain.gain.setTargetAtTime(effective, now, 0.02);
+    this._applyYtVolume(effective);
+  }
+
+  _applyYtVolume(effective = null) {
+    if (!this._ytReady || !this._ytPlayer) return;
+    const spatialGain = this.spatialEnabled ? Math.max(0.65, 1.0 - Math.max(0, this.posY) * 0.25) : 1.0;
+    const gain =
+      effective !== null
+        ? effective
+        : this.speakerMuted || this.masterMuted
+          ? 0.0
+          : this.speakerVolume * this.masterVolume * spatialGain;
+    try {
+      if (gain <= 0.001) {
+        this._ytPlayer.mute?.();
+      } else {
+        this._ytPlayer.unMute?.();
+        this._ytPlayer.setVolume?.(Math.round(Math.min(1, gain) * 100));
+      }
+    } catch {
+      // Ignore YT volume errors before load
+    }
   }
 
   setOffsetMs(ms) {
@@ -435,6 +466,7 @@ export class SyncAudioEngine {
 
     if (!pb || pb.status === "stopped" || !pb.track) {
       this._stopPlaybackNodes();
+      this._pauseYt();
       this.syncStatus = this.unlocked ? "idle" : "needs_unlock";
       this._emitTelemetry(0);
       return;
@@ -450,6 +482,13 @@ export class SyncAudioEngine {
     if (this.audioCtx && this.audioCtx.state === "suspended") {
       this.audioCtx.resume().catch(() => {});
     }
+
+    if (pb.audio_ready && pb.use_yt_iframe) {
+      await this._applyYtPlayback(pb, forceResync, prev);
+      return;
+    }
+
+    this._pauseYt();
 
     if (pb.audio_ready && pb.audio_url) {
       if (pb.use_streaming) {
@@ -657,6 +696,170 @@ export class SyncAudioEngine {
     this.syncStatus = "locked";
   }
 
+  // ------------------------------------------------------------------
+  // Direct YouTube IFrame Player Fallback (Synced Playback Engine)
+  // ------------------------------------------------------------------
+
+  _ensureYtApi() {
+    if (globalThis.YT?.Player) return Promise.resolve();
+    if (this._ytApiPromise) return this._ytApiPromise;
+    this._ytApiPromise = new Promise((resolve) => {
+      const prevReady = globalThis.onYouTubeIframeAPIReady;
+      globalThis.onYouTubeIframeAPIReady = () => {
+        if (typeof prevReady === "function") {
+          try {
+            prevReady();
+          } catch {
+            // Ignore
+          }
+        }
+        resolve();
+      };
+      if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+        const s = document.createElement("script");
+        s.src = "https://www.youtube.com/iframe_api";
+        s.async = true;
+        document.head.appendChild(s);
+      }
+    });
+    return this._ytApiPromise;
+  }
+
+  _ensureYtPlayer() {
+    if (this._ytReady && this._ytPlayer) return Promise.resolve(this._ytPlayer);
+    if (this._ytPlayerPromise) return this._ytPlayerPromise;
+    this._ytPlayerPromise = (async () => {
+      await this._ensureYtApi();
+      let mount = document.getElementById("ytDirectMount");
+      if (!mount) {
+        mount = document.createElement("div");
+        mount.id = "ytDirectMount";
+        mount.style.cssText =
+          "position:fixed;left:-20px;bottom:-20px;width:2px;height:2px;opacity:0.001;pointer-events:none;overflow:hidden;";
+        document.body.appendChild(mount);
+      }
+      return await new Promise((resolve) => {
+        this._ytPlayer = new globalThis.YT.Player(mount, {
+          width: "2",
+          height: "2",
+          playerVars: {
+            autoplay: 0,
+            controls: 0,
+            disablekb: 1,
+            playsinline: 1,
+            rel: 0,
+            origin: location.origin,
+          },
+          events: {
+            onReady: () => {
+              this._ytReady = true;
+              this._applyYtVolume();
+              resolve(this._ytPlayer);
+            },
+          },
+        });
+      });
+    })();
+    return this._ytPlayerPromise;
+  }
+
+  _pauseYt() {
+    if (this._ytStartTimer !== null) {
+      clearTimeout(this._ytStartTimer);
+      this._ytStartTimer = null;
+    }
+    if (this._ytReady && this._ytPlayer) {
+      try {
+        this._ytPlayer.pauseVideo?.();
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  async _applyYtPlayback(pb, forceResync, prev) {
+    this._stopPlaybackNodes();
+    this._pauseYt();
+
+    if (!this._ytReady) {
+      this.syncStatus = "buffering";
+      this._emitTelemetry(0);
+      await Promise.race([this._ensureYtPlayer(), new Promise((r) => setTimeout(r, 2000))]);
+    }
+
+    if (!this._ytReady || !this._ytPlayer || this.playbackState?.generation !== pb.generation) {
+      if (pb.status === "loading" && typeof this.onReady === "function") {
+        this.onReady(pb.generation);
+      }
+      return;
+    }
+
+    this._applyYtVolume();
+    const vid = pb.track.video_id;
+    const isNewTrack = this._ytLoadedVideoId !== vid;
+
+    if (pb.status === "loading") {
+      if (isNewTrack) {
+        this._ytLoadedVideoId = vid;
+        this._ytPlayer.cueVideoById?.({ videoId: vid, startSeconds: pb.anchor_position_sec || 0 });
+      }
+      if (typeof this.onReady === "function") {
+        setTimeout(() => this.onReady(pb.generation), 250);
+      }
+      return;
+    }
+
+    if (pb.status === "paused") {
+      if (isNewTrack) {
+        this._ytLoadedVideoId = vid;
+        this._ytPlayer.cueVideoById?.({ videoId: vid, startSeconds: pb.anchor_position_sec || 0 });
+      } else {
+        this._ytPlayer.seekTo?.(pb.anchor_position_sec || 0, true);
+        this._ytPlayer.pauseVideo?.();
+      }
+      this.syncStatus = "idle";
+      this._emitTelemetry(0);
+      return;
+    }
+
+    if (pb.status === "playing") {
+      const sameGeneration = prev && prev.generation === pb.generation && prev.status === "playing";
+      if (!isNewTrack && sameGeneration && !forceResync) return;
+
+      const hwLatencyMs = this._getHwLatencySec() * 1000;
+      const targetStartPerfMs =
+        pb.anchor_server_ms - this.clockSync.offsetMs + this.offsetMs - hwLatencyMs;
+      const delayMs = targetStartPerfMs - performance.now();
+
+      const startAt = () => {
+        if (!this.playbackState || this.playbackState.generation !== pb.generation || this.playbackState.status !== "playing") {
+          return;
+        }
+        const expected = Math.max(0, this.getExpectedPositionSec());
+        if (isNewTrack) {
+          this._ytLoadedVideoId = vid;
+          this._ytPlayer.loadVideoById?.({ videoId: vid, startSeconds: expected });
+        } else {
+          this._ytPlayer.seekTo?.(expected, true);
+          this._ytPlayer.playVideo?.();
+        }
+        this._applyYtVolume();
+        this.syncStatus = "locked";
+        this._emitTelemetry(0);
+      };
+
+      if (delayMs > 40 && delayMs < 2000) {
+        if (isNewTrack) {
+          this._ytLoadedVideoId = vid;
+          this._ytPlayer.cueVideoById?.({ videoId: vid, startSeconds: pb.anchor_position_sec || 0 });
+        }
+        this._ytStartTimer = setTimeout(startAt, delayMs);
+      } else {
+        startAt();
+      }
+    }
+  }
+
   getExpectedPositionSec() {
     const pb = this.playbackState;
     if (!pb || !pb.track) return 0;
@@ -691,6 +894,43 @@ export class SyncAudioEngine {
     const baseRate = pb.playback_rate || 1.0;
     const expectedPos =
       pb.anchor_position_sec + ((effectiveServerNow - pb.anchor_server_ms) / 1000.0) * baseRate;
+
+    if (pb.use_yt_iframe && this._ytReady && this._ytPlayer) {
+      const state = this._ytPlayer.getPlayerState?.();
+      if (state === 2 || state === 5) {
+        this._ytPlayer.playVideo?.();
+      }
+      if (state !== 1) return;
+      const actual = Number(this._ytPlayer.getCurrentTime?.() || 0);
+      const driftMs = (expectedPos - actual) * 1000.0;
+      this.lastDriftMs = driftMs;
+      const absDrift = Math.abs(driftMs);
+      if (absDrift < 35) {
+        try {
+          if (this._ytPlayer.getPlaybackRate?.() !== 1) this._ytPlayer.setPlaybackRate?.(1);
+        } catch {
+          // Ignore
+        }
+        this.syncStatus = "locked";
+      } else if (absDrift <= 180) {
+        try {
+          this._ytPlayer.setPlaybackRate?.(driftMs > 0 ? 1.05 : 0.95);
+        } catch {
+          // Ignore
+        }
+        this.syncStatus = "syncing";
+      } else {
+        this._ytPlayer.seekTo?.(Math.max(0, expectedPos), true);
+        try {
+          this._ytPlayer.setPlaybackRate?.(1);
+        } catch {
+          // Ignore
+        }
+        this.syncStatus = "syncing";
+      }
+      this._emitTelemetry(driftMs);
+      return;
+    }
 
     if (pb.use_streaming && this._audioEl) {
       if (this._audioEl.paused) this._audioEl.play().catch(() => {});
@@ -861,6 +1101,24 @@ export class SyncAudioEngine {
   // ------------------------------------------------------------------
 
   getFrequencyData(targetUint8Array) {
+    if (
+      this.playbackState?.use_yt_iframe &&
+      this.playbackState?.status === "playing" &&
+      this.unlocked &&
+      !this.speakerMuted &&
+      !this.masterMuted
+    ) {
+      const t = performance.now() * 0.004;
+      for (let i = 0; i < targetUint8Array.length; i++) {
+        const rolloff = Math.max(0.22, 1 - i / targetUint8Array.length);
+        const wave =
+          0.52 +
+          0.28 * Math.sin(t * 1.4 + i * 0.35) +
+          0.2 * Math.cos(t * 2.3 - i * 0.18);
+        targetUint8Array[i] = Math.min(245, Math.max(12, Math.round(wave * rolloff * 210)));
+      }
+      return true;
+    }
     if (!this.analyser || !this.unlocked) {
       targetUint8Array.fill(0);
       return false;
@@ -870,6 +1128,16 @@ export class SyncAudioEngine {
   }
 
   getBassEnergy() {
+    if (
+      this.playbackState?.use_yt_iframe &&
+      this.playbackState?.status === "playing" &&
+      this.unlocked &&
+      !this.speakerMuted &&
+      !this.masterMuted
+    ) {
+      const t = performance.now() * 0.0055;
+      return Math.min(1, Math.max(0.18, 0.48 + 0.32 * Math.sin(t) + 0.15 * Math.cos(t * 2.1)));
+    }
     if (!this.analyser || !this.unlocked) return 0;
     this.analyser.getByteFrequencyData(this._vizBins);
     let sum = 0;

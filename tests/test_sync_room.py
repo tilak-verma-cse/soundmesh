@@ -165,3 +165,60 @@ async def test_ready_barrier_queue_transport_and_calibration(tmp_path: Path, mon
     await room.clear_queue("host")
     assert len(room.queue) == 0
     assert room.playback.status == "stopped"
+
+
+@pytest.mark.anyio
+async def test_yt_iframe_circuit_breaker_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When yt-dlp fails on YouTube tracks, SyncRoom falls back to use_yt_iframe & opens circuit breaker."""
+    import asyncio
+    from backend.audio_cache import AudioCache
+    from backend.config import server_now_ms
+    from backend.models import Track
+    from backend.sync_room import SyncRoom
+
+    class _FakeWS:
+        async def send_json(self, payload: dict) -> None:
+            return None
+
+    cache = AudioCache(cache_dir=tmp_path)
+
+    async def _fail_ensure(*args, **kwargs):
+        raise RuntimeError("Failed to extract any player response")
+
+    monkeypatch.setattr(cache, "ensure_track", _fail_ensure)
+    monkeypatch.setattr(cache, "prefetch", lambda *args, **kwargs: None)
+
+    room = SyncRoom(audio_cache=cache, room_code="FALLBK")
+    await room.register_speaker("host", _FakeWS(), "Host", "desktop", is_host=True)  # type: ignore[arg-type]
+    room.queue.append(Track(video_id="jTAvdBi2jz4", title="Blocked Song", artist="Artist", duration_sec=210.0))
+    room.queue.append(Track(video_id="gkc6NcgVCNk", title="Second Song", artist="Artist", duration_sec=200.0))
+
+    await room.play_queue_index(0)
+    if room._load_task is not None:
+        await room._load_task
+
+    assert room.playback.use_yt_iframe is True
+    assert room.playback.audio_ready is True
+    assert room.playback.audio_url == "yt:jTAvdBi2jz4"
+    assert room.playback.status == "playing"
+    assert room._ytdlp_blocked_until > server_now_ms()
+
+    # Second track skips blocked yt-dlp immediately without calling ensure_track again
+    called_second = False
+
+    async def _fail_if_called(*args, **kwargs):
+        nonlocal called_second
+        called_second = True
+        raise RuntimeError("should not run while circuit breaker is open")
+
+    monkeypatch.setattr(cache, "ensure_track", _fail_if_called)
+    await room.play_queue_index(1)
+    if room._load_task is not None:
+        await room._load_task
+
+    assert called_second is False
+    assert room.playback.use_yt_iframe is True
+    assert room.playback.audio_url == "yt:gkc6NcgVCNk"
+    assert room.playback.status == "playing"

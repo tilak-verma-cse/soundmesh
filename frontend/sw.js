@@ -1,4 +1,4 @@
-const CACHE_NAME = "soundmesh-shell-v3";
+const CACHE_NAME = "soundmesh-shell-v4";
 const SHELL_ASSETS = ["/", "/css/styles.css", "/js/app.js", "/js/env.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {

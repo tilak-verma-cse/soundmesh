@@ -351,15 +351,50 @@ class YTMusicService:
             "tracks": tracks,
         }
 
-    def _get_related_sync(self, video_id: str, limit: int) -> list[dict[str, Any]]:
-        yt = self._get_client()
-        watch = yt.get_watch_playlist(videoId=video_id, limit=limit)
+    def _get_related_sync(
+        self, video_id: str, limit: int, title: str = "", artist: str = ""
+    ) -> list[dict[str, Any]]:
         tracks: list[dict[str, Any]] = []
-        for item in watch.get("tracks") or []:
-            track = self._normalize_track(item)
-            if track and track.video_id != video_id:
-                tracks.append(track.model_dump())
-        return tracks
+        try:
+            yt = self._get_client()
+            watch = yt.get_watch_playlist(videoId=video_id, limit=limit)
+            for item in (watch or {}).get("tracks") or []:
+                track = self._normalize_track(item)
+                if track and track.video_id != video_id:
+                    tracks.append(track.model_dump())
+            if tracks:
+                return tracks[:limit]
+        except Exception as exc:
+            logger.warning("ytmusic get_watch_playlist failed for %s: %s", video_id, exc)
+
+        # Fallback: resolve title/author via YouTube oEmbed if needed, then search similar songs
+        clean_title = title.strip()
+        clean_artist = artist.strip()
+        if not clean_title:
+            try:
+                import httpx
+
+                resp = httpx.get(
+                    "https://www.youtube.com/oembed",
+                    params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+                    timeout=4.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    clean_title = str(data.get("title") or "").strip()
+                    clean_artist = str(data.get("author_name") or "").strip()
+            except Exception as o_exc:
+                logger.debug("oEmbed lookup failed for %s: %s", video_id, o_exc)
+
+        query = f"{clean_artist} {clean_title} mix".strip() if (clean_title or clean_artist) else f"{video_id} music"
+        try:
+            res = self._search_sync(query, "songs", limit + 6)
+            found = res.get("tracks") or []
+        except Exception:
+            found = self._ytdlp_search_fallback(query, limit + 6).get("tracks") or []
+
+        filtered = [t for t in found if t.get("video_id") != video_id]
+        return filtered[:limit]
 
     async def search(
         self, query: str, filter_type: str = "songs", limit: int = 20
@@ -417,9 +452,11 @@ class YTMusicService:
         """Fetch album metadata and tracks."""
         return await asyncio.to_thread(self._get_album_sync, browse_id)
 
-    async def get_related_tracks(self, video_id: str, limit: int = 15) -> list[dict[str, Any]]:
-        """Fetch YouTube Music Radio / Up Next recommendations for a track."""
-        return await asyncio.to_thread(self._get_related_sync, video_id, limit)
+    async def get_related_tracks(
+        self, video_id: str, limit: int = 15, title: str = "", artist: str = ""
+    ) -> list[dict[str, Any]]:
+        """Fetch YouTube Music Radio / Up Next recommendations with automatic fallback."""
+        return await asyncio.to_thread(self._get_related_sync, video_id, limit, title, artist)
 
     def _get_lyrics_sync(self, video_id: str) -> dict[str, Any]:
         try:

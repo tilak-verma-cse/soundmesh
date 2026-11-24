@@ -105,8 +105,7 @@ def get_public_url() -> str:
 
 
 def get_ytdlp_cookiefile() -> str | None:
-    """Return path to YouTube cookies file from YTDLP_COOKIES_FILE or YTDLP_COOKIES_B64."""
-    global _cached_cookie_digest, _cached_cookie_path
+    """Return a clean, uncorrupted path to YouTube cookies from YTDLP_COOKIES_FILE or YTDLP_COOKIES_B64."""
     direct_path = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
     if direct_path and Path(direct_path).is_file():
         return direct_path
@@ -119,24 +118,17 @@ def get_ytdlp_cookiefile() -> str | None:
     except Exception:
         return None
 
-    import hashlib
-
-    digest = hashlib.sha256(raw).hexdigest()
-    if _cached_cookie_digest == digest and _cached_cookie_path and Path(_cached_cookie_path).is_file():
-        return _cached_cookie_path
-
     for target_dir in (DATA_DIR, Path(tempfile.gettempdir())):
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
             cookie_path = target_dir / "yt_cookies.txt"
+            # Always restore fresh cookie bytes so yt-dlp cannot mutate/corrupt them across runs
             cookie_path.write_bytes(raw)
             try:
                 os.chmod(cookie_path, 0o600)
             except OSError:
                 pass
-            _cached_cookie_digest = digest
-            _cached_cookie_path = str(cookie_path)
-            return _cached_cookie_path
+            return str(cookie_path)
         except OSError:
             continue
     return None
