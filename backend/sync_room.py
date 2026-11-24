@@ -17,6 +17,7 @@ from backend.config import (
     CALIBRATION_INTERVAL_MS,
     PLAY_LEAD_MS,
     READY_BARRIER_TIMEOUT_SEC,
+    SPEAKER_STALE_TIMEOUT_MS,
     STREAMING_THRESHOLD_SEC,
     server_now_ms,
 )
@@ -50,6 +51,7 @@ class SpeakerConnection:
     state: SpeakerState
     ws: WebSocket
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_seen_ms: float = field(default_factory=server_now_ms)
 
 
 class SyncRoom:
@@ -64,6 +66,7 @@ class SyncRoom:
         owner_name: str = "Host",
         is_public: bool = True,
         has_passcode: bool = False,
+        allow_collab_queue: bool = False,
     ) -> None:
         self.audio_cache = audio_cache
         self.room_code = room_code.strip().upper() or "STUDIO"
@@ -81,7 +84,7 @@ class SyncRoom:
         self.master_muted: bool = False
         # Leader Mode by default: the elected Leader controls playback for all devices
         self.allow_guest_control: bool = False
-        self.allow_collab_queue: bool = False
+        self.allow_collab_queue: bool = allow_collab_queue
 
         self.leader_speaker_id: str | None = None
         self.leader_user_id: str | None = None
@@ -122,10 +125,32 @@ class SyncRoom:
             except (asyncio.CancelledError, RuntimeError):
                 pass
 
+    def touch_speaker(self, speaker_id: str) -> None:
+        """Record latest heartbeat/activity timestamp for liveness tracking."""
+        conn = self.speakers.get(speaker_id)
+        if conn:
+            conn.last_seen_ms = server_now_ms()
+
+    async def _prune_stale_speakers(self) -> None:
+        """Drop silently disconnected speakers whose heartbeat timed out."""
+        now_ms = server_now_ms()
+        stale = [
+            (sid, conn)
+            for sid, conn in list(self.speakers.items())
+            if (now_ms - conn.last_seen_ms) > SPEAKER_STALE_TIMEOUT_MS
+        ]
+        for sid, conn in stale:
+            try:
+                await conn.ws.close(code=1001)
+            except Exception:
+                pass
+            await self.unregister_speaker(sid, ws=conn.ws)
+
     async def _auto_advance_loop(self) -> None:
         while True:
             try:
                 await asyncio.sleep(0.5)
+                await self._prune_stale_speakers()
                 pb = self.playback
                 if pb.status == "playing" and pb.audio_duration_sec > 0:
                     pos = self.get_current_position_sec()
@@ -401,6 +426,16 @@ class SyncRoom:
             connected_at=server_now_ms(),
         )
         self.speakers[speaker_id] = SpeakerConnection(state=state, ws=ws)
+        if (
+            existing_conn is not None
+            and existing_conn.ws is not ws
+            and existing_conn.state.id == speaker_id
+        ):
+            old_ws = existing_conn.ws
+            try:
+                await old_ws.close(code=1000)
+            except Exception:
+                pass
         if user_id and speaker_id not in self._speaker_owners:
             self._speaker_owners[speaker_id] = user_id
         self._sync_leader_flags()
@@ -430,6 +465,7 @@ class SyncRoom:
         removed = self.speakers.pop(speaker_id, None)
         if removed is None:
             return
+        self._speaker_owners.pop(speaker_id, None)
         self.last_activity_ms = server_now_ms()
 
         self.pending_leader_requests.pop(speaker_id, None)
@@ -479,6 +515,29 @@ class SyncRoom:
                     return sp
         # 3. Earliest connected remaining speaker
         return ordered_by_join[0]
+
+    async def remove_speaker(self, actor_id: str, target_id: str) -> bool:
+        """Allow Leader or Owner (or room-control guests) to disconnect a stale/other speaker."""
+        if actor_id == target_id:
+            return False
+        if not (self.can_assign_leader(actor_id) or self.can_control_room(actor_id)):
+            return False
+        target_conn = self.speakers.get(target_id)
+        if not target_conn:
+            return False
+        actor_conn = self.speakers.get(actor_id)
+        actor_name = (
+            (actor_conn.state.user_name or actor_conn.state.name)
+            if actor_conn
+            else "Room DJ"
+        )
+        await self.send_to(target_id, {"type": "kicked", "by": actor_name})
+        try:
+            await target_conn.ws.close(code=4403, reason="Removed from room")
+        except Exception:
+            pass
+        await self.unregister_speaker(target_id, ws=target_conn.ws)
+        return True
 
     async def assign_leader(self, actor_id: str, target_id: str) -> bool:
         """Pass or assign Room Leadership to `target_id` without interrupting playback."""

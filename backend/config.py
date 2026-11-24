@@ -134,8 +134,9 @@ def get_ytdlp_cookiefile() -> str | None:
     return None
 
 # Synchronization timing constants
-PLAY_LEAD_MS: float = 380.0
-READY_BARRIER_TIMEOUT_SEC: float = 2.5
+PLAY_LEAD_MS: float = 1000.0
+READY_BARRIER_TIMEOUT_SEC: float = 6.0
+SPEAKER_STALE_TIMEOUT_MS: float = 22000.0
 STREAMING_THRESHOLD_SEC: int = 720  # 12 minutes
 CALIBRATION_INTERVAL_MS: float = 1000.0
 

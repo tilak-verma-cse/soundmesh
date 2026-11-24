@@ -35,7 +35,7 @@ export class AcousticCalibrator {
     src.start(Math.max(ctx.currentTime + 0.01, whenCtx));
   }
 
-  async measureOffsetFromPulse(calibrationState, durationMs = 3200) {
+  async measureOffsetFromPulse(calibrationState, durationMs = 10500, onProgress = null) {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone access is not supported in this browser.");
     }
@@ -75,7 +75,16 @@ export class AcousticCalibrator {
 
     try {
       const startPerf = performance.now();
+      let lastSec = -1;
       while (performance.now() - startPerf < durationMs) {
+        const elapsed = performance.now() - startPerf;
+        if (typeof onProgress === "function") {
+          const secLeft = Math.max(1, Math.ceil((durationMs - elapsed) / 1000));
+          if (secLeft !== lastSec) {
+            lastSec = secLeft;
+            onProgress(secLeft);
+          }
+        }
         analyser.getFloatTimeDomainData(timeData);
         let peak = 0;
         for (let i = 0; i < timeData.length; i++) {

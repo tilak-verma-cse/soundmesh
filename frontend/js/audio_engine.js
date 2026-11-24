@@ -98,6 +98,7 @@ export class SyncAudioEngine {
     this._ytApiPromise = null;
     this._ytPlayerPromise = null;
     this._ytStartTimer = null;
+    this._ytLastSeekPerfMs = 0;
 
     // Playback state mirror
     this.playbackState = null;
@@ -241,7 +242,7 @@ export class SyncAudioEngine {
 
   _startLoops() {
     if (this._driftTimer === null) {
-      this._driftTimer = setInterval(() => this._runDriftCheck(), 1200);
+      this._driftTimer = setInterval(() => this._runDriftCheck(), 5000);
     }
     if (this._calTimer === null) {
       this._calTimer = setInterval(() => this._scheduleCalibrationClicks(), 50);
@@ -836,6 +837,7 @@ export class SyncAudioEngine {
           return;
         }
         const expected = Math.max(0, this.getExpectedPositionSec());
+        this._ytLastSeekPerfMs = performance.now();
         if (isNewTrack) {
           this._ytLoadedVideoId = vid;
           this._ytPlayer.loadVideoById?.({ videoId: vid, startSeconds: expected });
@@ -848,7 +850,7 @@ export class SyncAudioEngine {
         this._emitTelemetry(0);
       };
 
-      if (delayMs > 40 && delayMs < 2000) {
+      if (delayMs > 40 && delayMs < 5000) {
         if (isNewTrack) {
           this._ytLoadedVideoId = vid;
           this._ytPlayer.cueVideoById?.({ videoId: vid, startSeconds: pb.anchor_position_sec || 0 });
@@ -901,31 +903,25 @@ export class SyncAudioEngine {
         this._ytPlayer.playVideo?.();
       }
       if (state !== 1) return;
+      if (performance.now() - this._ytLastSeekPerfMs < 6000) {
+        this.syncStatus = "locked";
+        this._emitTelemetry(this.lastDriftMs);
+        return;
+      }
       const actual = Number(this._ytPlayer.getCurrentTime?.() || 0);
       const driftMs = (expectedPos - actual) * 1000.0;
       this.lastDriftMs = driftMs;
       const absDrift = Math.abs(driftMs);
-      if (absDrift < 35) {
-        try {
-          if (this._ytPlayer.getPlaybackRate?.() !== 1) this._ytPlayer.setPlaybackRate?.(1);
-        } catch {
-          // Ignore
-        }
+      try {
+        if (this._ytPlayer.getPlaybackRate?.() !== 1) this._ytPlayer.setPlaybackRate?.(1);
+      } catch {
+        // Ignore
+      }
+      if (absDrift <= 420) {
         this.syncStatus = "locked";
-      } else if (absDrift <= 180) {
-        try {
-          this._ytPlayer.setPlaybackRate?.(driftMs > 0 ? 1.05 : 0.95);
-        } catch {
-          // Ignore
-        }
-        this.syncStatus = "syncing";
       } else {
-        this._ytPlayer.seekTo?.(Math.max(0, expectedPos), true);
-        try {
-          this._ytPlayer.setPlaybackRate?.(1);
-        } catch {
-          // Ignore
-        }
+        this._ytLastSeekPerfMs = performance.now();
+        this._ytPlayer.seekTo?.(Math.max(0, expectedPos + 0.08), true);
         this.syncStatus = "syncing";
       }
       this._emitTelemetry(driftMs);
@@ -937,11 +933,11 @@ export class SyncAudioEngine {
       const driftMs = (expectedPos - this._audioEl.currentTime) * 1000.0;
       this.lastDriftMs = driftMs;
       const absDrift = Math.abs(driftMs);
-      if (absDrift < 8) {
+      if (absDrift < 40) {
         this._audioEl.playbackRate = baseRate;
         this.syncStatus = "locked";
-      } else if (absDrift <= 120) {
-        this._audioEl.playbackRate = baseRate + Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
+      } else if (absDrift <= 300) {
+        this._audioEl.playbackRate = baseRate + Math.max(-0.006, Math.min(0.006, driftMs / 8000.0));
         this.syncStatus = "syncing";
       } else {
         this._audioEl.currentTime = Math.max(0, expectedPos);
@@ -961,20 +957,20 @@ export class SyncAudioEngine {
     this.lastDriftMs = driftMs;
     const absDrift = Math.abs(driftMs);
 
-    if (absDrift < 4) {
+    if (absDrift < 25) {
       if (this._activeRate !== baseRate) {
         this._integratedBufferPos = actualPos;
         this._lastRateCtxTime = nowCtx;
         this._activeRate = baseRate;
-        this._activeSource.playbackRate.setTargetAtTime(baseRate, nowCtx, 0.05);
+        this._activeSource.playbackRate.setTargetAtTime(baseRate, nowCtx, 0.08);
       }
       this.syncStatus = "locked";
-    } else if (absDrift <= 80) {
-      const nextRate = baseRate + Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
+    } else if (absDrift <= 280) {
+      const nextRate = baseRate + Math.max(-0.006, Math.min(0.006, driftMs / 8000.0));
       this._integratedBufferPos = actualPos;
       this._lastRateCtxTime = nowCtx;
       this._activeRate = nextRate;
-      this._activeSource.playbackRate.setTargetAtTime(nextRate, nowCtx, 0.05);
+      this._activeSource.playbackRate.setTargetAtTime(nextRate, nowCtx, 0.08);
       this.syncStatus = "syncing";
     } else {
       this._reschedulePlaying(true);
@@ -1062,11 +1058,11 @@ export class SyncAudioEngine {
     this.calibrator.emitChirpAt(this.audioCtx.currentTime + delaySec, this.analyser);
   }
 
-  async runMicAutoCalibrate() {
+  async runMicAutoCalibrate(onProgress = null) {
     if (!this.unlocked || !this.calibrator) {
       throw new Error("Enable speaker audio first.");
     }
-    return await this.calibrator.measureOffsetFromPulse(this.calibrationState);
+    return await this.calibrator.measureOffsetFromPulse(this.calibrationState, 10500, onProgress);
   }
 
   playIdentifyChime() {

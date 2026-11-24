@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -79,7 +80,8 @@ app.add_middleware(
     allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Room-Join-Ticket"],
+    allow_headers=["Authorization", "Content-Type", "X-Room-Join-Ticket", "Range"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 
 
@@ -119,6 +121,7 @@ class CreateRoomPayload(BaseModel):
     name: str = ""
     is_public: bool = True
     passcode: str = ""
+    allow_collab_queue: bool = True
 
 
 class VerifyRoomPayload(BaseModel):
@@ -464,6 +467,7 @@ async def create_room(payload: CreateRoomPayload, request: Request) -> dict[str,
         owner_user=user,
         is_public=payload.is_public,
         passcode=payload.passcode,
+        allow_collab_queue=payload.allow_collab_queue,
     )
     return {"room": room.get_summary()}
 
@@ -527,11 +531,11 @@ def _build_room_info_payload(room_code: str, request: Request) -> dict[str, Any]
     join_urls: list[str] = []
     if config.FRONTEND_URL:
         join_urls.append(f"{config.FRONTEND_URL}/room/{clean_code}")
-    if public_url:
+    elif public_url:
         candidate_pub = f"{public_url}/room/{clean_code}"
         if candidate_pub not in join_urls:
             join_urls.append(candidate_pub)
-    elif not config.FRONTEND_URL:
+    else:
         base_url = config.resolve_base_url(request)
         if base_url.startswith("https://"):
             join_urls.append(f"{base_url}/room/{clean_code}")
@@ -881,7 +885,13 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
 
     await ws.accept()
 
-    owner_key = str(user["id"]) if user else f"anon_{secrets.token_hex(8)}"
+    reconnect_key = (qp.get("rk") or "").strip()[:64]
+    if user:
+        owner_key = str(user["id"])
+    elif len(reconnect_key) >= 16:
+        owner_key = f"anon_{hashlib.sha256(reconnect_key.encode('utf-8')).hexdigest()[:16]}"
+    else:
+        owner_key = f"anon_{secrets.token_hex(8)}"
     speaker_id = room.resolve_speaker_id(qp.get("client_id"), owner_key)
     raw_name = (qp.get("name") or "").strip()
     device_type = _parse_device_type(qp.get("device_type"))
@@ -922,7 +932,10 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
 
     try:
         while True:
-            raw_frame = await ws.receive_text()
+            try:
+                raw_frame = await asyncio.wait_for(ws.receive_text(), timeout=24.0)
+            except asyncio.TimeoutError:
+                break
             if len(raw_frame) > 65536:
                 continue
             try:
@@ -932,6 +945,7 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
             if not isinstance(msg, dict):
                 continue
 
+            room.touch_speaker(speaker_id)
             msg_type = msg.get("type")
 
             # CRITICAL FAST PATH for NTP clock synchronization
@@ -1055,6 +1069,12 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
                     await room.trigger_acoustic_chirp(
                         speaker_id, str(msg.get("target_id") or speaker_id)
                     )
+            elif msg_type == "remove_speaker":
+                target_id = str(msg.get("target_id") or "")
+                if target_id:
+                    await room.remove_speaker(speaker_id, target_id)
+            elif msg_type == "leave_room":
+                break
     except WebSocketDisconnect:
         pass
     except Exception as exc:

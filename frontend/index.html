@@ -156,11 +156,11 @@
       <div class="lobby-hero-copy">
         <div class="hero-eyebrow">
           <span class="pulse-dot"></span>
-          <span>PHASE-LOCKED ACOUSTIC MESH</span>
+          <span>CROSS-NETWORK CLOUD SYNC</span>
         </div>
-        <h1>Every device in the room,<br /><span class="hero-accent-text">playing as one speaker.</span></h1>
+        <h1>Every device anywhere,<br /><span class="hero-accent-text">playing as one speaker.</span></h1>
         <p>
-          Pull YouTube Music or local audio streams onto phones and laptops together, synced to a shared master clock with zero Bluetooth pairing.
+          Across any Wi-Fi, 5G/4G mobile data, or different networks — connect phones and laptops anywhere as one synced sound system or switch source DJs anytime.
         </p>
       </div>
       <div class="hero-sculpture" aria-hidden="true">
@@ -253,8 +253,8 @@
       <!-- Tab 1: Join -->
       <div id="hubTabJoin" class="hub-pane">
         <form id="joinCodeForm" class="stack-form">
-          <label class="field-label" for="joinCodeInput">Room Code</label>
-          <input id="joinCodeInput" type="text" maxlength="12" placeholder="STUDIO or 6-letter code" class="code-input" required />
+          <label class="field-label" for="joinCodeInput">Room Code or Link</label>
+          <input id="joinCodeInput" type="text" maxlength="160" placeholder="Room code (e.g. STUDIO) or paste room link…" class="code-input" required />
           <details class="compact-disclosure">
             <summary>Have a room PIN?</summary>
             <div class="disclosure-body">
@@ -348,7 +348,7 @@
     <div id="calibrationBanner" class="calibration-banner hidden">
       <div class="cal-info">
         <span class="cal-badge">SYNC PULSE ON</span>
-        <span>Reference ticks firing — tap <strong>1-Tap Mic Align</strong> under Speakers → Sonar Sync.</span>
+        <span>Reference clicks playing — hold phone near speakers &amp; tap <strong>10s Mic Align</strong> under Speakers → Sync.</span>
       </div>
       <button id="stopCalibrationBtn" class="btn btn-amber btn-sm">Resume Music</button>
     </div>
@@ -519,7 +519,7 @@
         <div class="filter-tabs dsp-tabs" id="speakerSubTabs">
           <button class="tab-chip active" data-sp-tab="list">Speakers</button>
           <button class="tab-chip" data-sp-tab="eq">Equalizer</button>
-          <button class="tab-chip" data-sp-tab="sync">Sonar Sync</button>
+          <button class="tab-chip" data-sp-tab="sync">Sync</button>
           <button class="tab-chip" data-sp-tab="map">2D Stage</button>
         </div>
 
@@ -595,19 +595,15 @@
               <div class="sonar-ring s2"></div>
               <svg class="svg-i sonar-mic-icon" width="20" height="20"><use href="#i-mic"/></svg>
             </div>
-            <h4>1-Tap Mic Sonar Align</h4>
-            <p class="muted-text">Automatically measures speaker latency through your microphone and adjusts millisecond sync.</p>
+            <h4>10-Second Room Mic Sync (Optional)</h4>
+            <p class="muted-text">Cloud sync already aligns devices across different networks every 5s. If speakers are in the same physical room, tap below so THIS phone's mic listens to clicks for 10s to cancel Bluetooth/speaker hardware delay.</p>
             <div class="acoustic-actions">
               <button id="micAutoCalBtn" class="btn btn-primary btn-sm">
                 <svg class="svg-i" width="14" height="14"><use href="#i-mic"/></svg>
-                <span>1-Tap Mic Align</span>
-              </button>
-              <button id="emitChirpBtn" class="btn btn-outline btn-sm">
-                <svg class="svg-i" width="14" height="14"><use href="#i-wave"/></svg>
-                <span>Test Sweep</span>
+                <span>Start 10s Mic Sync</span>
               </button>
             </div>
-            <div id="acousticResultText" class="sonar-readout mono-sm">Ready to calibrate.</div>
+            <div id="acousticResultText" class="sonar-readout mono-sm">Cloud sync locked · Mic align optional.</div>
           </div>
         </div>
 
@@ -795,7 +791,7 @@
           <svg class="svg-i" width="16" height="16"><use href="#i-close"/></svg>
         </button>
       </div>
-      <p class="muted-text">Scan with any phone camera or copy the room link.</p>
+      <p class="muted-text">Works across any Wi-Fi, 5G/4G mobile data, or different networks — scan QR or share link.</p>
       <div class="qr-frame">
         <img id="qrImage" alt="Join SoundMesh Room QR Code" />
       </div>

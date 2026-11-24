@@ -28,7 +28,9 @@ class RoomManager:
                 return code
         return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(length + 2))
 
-    def _hydrate_room(self, rec: dict[str, Any]) -> SyncRoom:
+    def _hydrate_room(
+        self, rec: dict[str, Any], allow_collab_queue: bool = True
+    ) -> SyncRoom:
         code = rec["code"].upper()
         if code in self.rooms:
             return self.rooms[code]
@@ -40,6 +42,7 @@ class RoomManager:
             owner_name=rec["owner_name"],
             is_public=bool(rec["is_public"]),
             has_passcode=bool(rec["has_passcode"]),
+            allow_collab_queue=allow_collab_queue,
         )
         room.start()
         self.rooms[code] = room
@@ -51,6 +54,7 @@ class RoomManager:
         owner_user: dict[str, Any],
         is_public: bool = True,
         passcode: str = "",
+        allow_collab_queue: bool = True,
     ) -> SyncRoom:
         """Create and persist a new synchronized room."""
         code = self.generate_room_code()
@@ -63,7 +67,7 @@ class RoomManager:
             is_public=is_public,
             passcode=passcode,
         )
-        return self._hydrate_room(rec)
+        return self._hydrate_room(rec, allow_collab_queue=allow_collab_queue)
 
     def get_or_load_room(self, code: str) -> SyncRoom | None:
         """Return an active room or hydrate it from SQLite if it exists."""

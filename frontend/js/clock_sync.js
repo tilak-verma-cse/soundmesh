@@ -9,7 +9,7 @@ export class ClockSync {
     this.onSyncUpdateFn = onSyncUpdateFn;
 
     this.samples = [];
-    this.maxSamples = 16;
+    this.maxSamples = 24;
     this.offsetMs = 0;
     this.rttMs = 0;
     this.jitterMs = 0;
@@ -28,17 +28,23 @@ export class ClockSync {
 
   startInitialBurst() {
     this.stop();
-    // 12 rapid pings spaced 65ms apart to lock clock quickly on join
-    for (let i = 0; i < 12; i++) {
+    // 10-second calibration window: rapid initial lock + steady samples across cellular/Wi-Fi jitter
+    for (let i = 0; i < 8; i++) {
       const timer = setTimeout(() => {
         this._sendOnePing();
-      }, i * 65);
+      }, i * 100);
+      this._burstTimers.push(timer);
+    }
+    for (let i = 0; i < 15; i++) {
+      const timer = setTimeout(() => {
+        this._sendOnePing();
+      }, 900 + i * 620);
       this._burstTimers.push(timer);
     }
 
     this._steadyTimer = setInterval(() => {
       this._sendOnePing();
-    }, 3000);
+    }, 5000);
   }
 
   triggerQuickResync() {
@@ -107,10 +113,10 @@ export class ClockSync {
       best.reduce((acc, s) => acc + Math.pow(s.rtt - meanRtt, 2), 0) /
       best.length;
 
-    if (!this.synced || this.samples.length <= 8 || Math.abs(medianOffset - this.offsetMs) > 40) {
+    if (!this.synced || this.samples.length <= 6 || Math.abs(medianOffset - this.offsetMs) > 400) {
       this.offsetMs = medianOffset;
     } else {
-      this.offsetMs = this.offsetMs * 0.75 + medianOffset * 0.25;
+      this.offsetMs = this.offsetMs * 0.85 + medianOffset * 0.15;
     }
 
     this.rttMs = minRtt;

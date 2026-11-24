@@ -222,3 +222,49 @@ async def test_yt_iframe_circuit_breaker_fallback(
     assert room.playback.use_yt_iframe is True
     assert room.playback.audio_url == "yt:gkc6NcgVCNk"
     assert room.playback.status == "playing"
+
+
+@pytest.mark.anyio
+async def test_stale_speaker_pruned_and_remove_speaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disconnected/silent speakers are pruned automatically, and DJ can remove stale speakers."""
+    from backend import sync_room as sr_mod
+
+    class _ClosableWS(FakeWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = False
+
+        async def close(self, code: int = 1000, reason: str = "") -> None:
+            self.closed = True
+
+    room = SyncRoom(audio_cache=AudioCache(cache_dir=tmp_path), room_code="PRUNE1")
+    ws_dj = _ClosableWS()
+    ws_ghost = _ClosableWS()
+    ws_kick = _ClosableWS()
+
+    await room.register_speaker("dj", ws_dj, "DJ", "desktop", user_id="u_dj", is_host=True)  # type: ignore[arg-type]
+    await room.register_speaker("ghost", ws_ghost, "Ghost", "mobile", user_id="u_ghost")  # type: ignore[arg-type]
+    await room.register_speaker("kickme", ws_kick, "Old Phone", "mobile", user_id="u_kick")  # type: ignore[arg-type]
+
+    # DJ kicks Old Phone explicitly
+    assert await room.remove_speaker("dj", "kickme") is True
+    assert "kickme" not in room.speakers
+    assert ws_kick.closed is True
+
+    # Simulate Ghost missing heartbeats beyond stale timeout
+    room.speakers["ghost"].last_seen_ms = server_now_ms() - 60000.0
+    room.touch_speaker("dj")
+    monkeypatch.setattr(sr_mod, "SPEAKER_STALE_TIMEOUT_MS", 22000.0)
+    await room._prune_stale_speakers()
+    assert "ghost" not in room.speakers
+    assert ws_ghost.closed is True
+    assert "dj" in room.speakers
+
+    # Same owner reconnecting replaces old socket cleanly without duplicate speakers
+    ws_dj_new = _ClosableWS()
+    await room.register_speaker("dj", ws_dj_new, "DJ", "desktop", user_id="u_dj")  # type: ignore[arg-type]
+    assert ws_dj.closed is True
+    assert list(room.speakers.keys()) == ["dj"]
+    assert room.speakers["dj"].ws is ws_dj_new

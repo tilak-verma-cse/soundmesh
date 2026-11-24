@@ -22,6 +22,18 @@ function getOrCreateClientId() {
   return id;
 }
 
+function getOrCreateReconnectKey() {
+  let key = localStorage.getItem("soundmesh_reconnect_key");
+  if (!key || key.length < 16) {
+    const raw = crypto.randomUUID
+      ? crypto.randomUUID().replaceAll("-", "")
+      : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 32);
+    key = raw.slice(0, 32);
+    localStorage.setItem("soundmesh_reconnect_key", key);
+  }
+  return key;
+}
+
 function detectDeviceType() {
   const ua = navigator.userAgent || "";
   if (/iPad|Tablet|PlayBook|Silk/i.test(ua)) return "tablet";
@@ -89,6 +101,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const deviceType = detectDeviceType();
 const clientId = getOrCreateClientId();
+const reconnectKey = getOrCreateReconnectKey();
 let mySpeakerId = clientId;
 const savedRole = localStorage.getItem("soundmesh_role") || "stereo";
 const savedOffsetMs = Number(localStorage.getItem("soundmesh_offset_ms") || "0") || 0;
@@ -373,7 +386,6 @@ const localDriftStat = el("localDriftStat");
 const localOffsetStat = el("localOffsetStat");
 const sonarCard = el("sonarCard");
 const micAutoCalBtn = el("micAutoCalBtn");
-const emitChirpBtn = el("emitChirpBtn");
 const acousticResultText = el("acousticResultText");
 
 const qrModal = el("qrModal");
@@ -948,9 +960,26 @@ createRoomForm.addEventListener("submit", async (e) => {
   enterRoom(data.room.code, "", true);
 });
 
+function extractRoomCode(rawInput) {
+  const s = String(rawInput || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(s);
+    const m = u.pathname.match(/\/room\/([A-Za-z0-9_-]+)/i);
+    if (m) return m[1].toUpperCase();
+    const q = u.searchParams.get("room");
+    if (q) return q.trim().toUpperCase();
+  } catch {
+    // Plain room code or path
+  }
+  const pathMatch = s.match(/\/room\/([A-Za-z0-9_-]+)/i);
+  if (pathMatch) return pathMatch[1].toUpperCase();
+  return s.replace(/^#/, "").toUpperCase();
+}
+
 joinCodeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const code = joinCodeInput.value.trim().toUpperCase();
+  const code = extractRoomCode(joinCodeInput.value);
   if (!code) return;
   await attemptEnterRoom(code, joinPasscodeInput.value.trim(), false);
 });
@@ -1056,6 +1085,7 @@ function enterRoom(roomCode, joinTicket = "", pushHistory = true) {
 
   const wsParams = {
     client_id: clientId,
+    rk: reconnectKey,
     name: suggestedName,
     device_type: deviceType,
     role: savedRole,
@@ -1066,6 +1096,9 @@ function enterRoom(roomCode, joinTicket = "", pushHistory = true) {
 }
 
 function navigateToLobby(pushHistory = true) {
+  if (activeRoomCode) {
+    wsClient.send({ type: "leave_room" });
+  }
   wsClient.close();
   activeRoomCode = null;
   activeRoomJoinTicket = "";
@@ -1091,6 +1124,14 @@ brandHomeBtn.addEventListener("click", () => {
 });
 leaveRoomBtn.addEventListener("click", () => navigateToLobby());
 globalThis.addEventListener("popstate", () => handleInitialRoute(false));
+
+function leaveRoomOnUnload() {
+  if (!activeRoomCode) return;
+  wsClient.send({ type: "leave_room" });
+  wsClient.close();
+}
+globalThis.addEventListener("pagehide", leaveRoomOnUnload);
+globalThis.addEventListener("beforeunload", leaveRoomOnUnload);
 
 // ------------------------------------------------------------------
 // Audio Unlock
@@ -1204,6 +1245,10 @@ function handleServerMessage(msg) {
       break;
     case "room_closed":
       showToast("Room closed by host.");
+      navigateToLobby();
+      break;
+    case "kicked":
+      showToast(`Removed from room${msg.by ? ` by ${msg.by}` : ""}.`);
       navigateToLobby();
       break;
     default:
@@ -1597,7 +1642,7 @@ function buildSpeakerCardHtml(s) {
           <span data-role="telemetry">RTT ${Math.round(s.rtt_ms)}ms · Δ ${s.drift_ms >= 0 ? "+" : ""}${s.drift_ms.toFixed(1)}ms</span>
           <div class="speaker-actions-inline">
             ${showMakeLeader ? `<button class="btn btn-accent btn-xs" data-action="make-leader">Pass DJ</button>` : ""}
-            ${editable ? `<button class="btn btn-ghost btn-xs" data-action="sweep">Sweep</button>` : ""}
+            ${!isSelf && (canAssignLeader() || canControlRoom()) ? `<button class="btn btn-ghost btn-xs" data-action="remove-speaker">Remove</button>` : ""}
             <button class="btn btn-ghost btn-xs" data-action="ping">Chime</button>
           </div>
         </div>
@@ -1837,8 +1882,10 @@ micAutoCalBtn.addEventListener("click", async () => {
       audioEngine.setVolumes({ speakerMuted: true });
     }
 
-    acousticResultText.textContent = "Listening via microphone for 3.2s…";
-    const res = await audioEngine.runMicAutoCalibrate();
+    acousticResultText.textContent = "Listening via microphone… 10s remaining";
+    const res = await audioEngine.runMicAutoCalibrate((secLeft) => {
+      acousticResultText.textContent = `Listening via microphone… ${secLeft}s remaining`;
+    });
 
     audioEngine.setOffsetMs(res.suggestedOffsetMs);
     localStorage.setItem("soundmesh_offset_ms", String(res.suggestedOffsetMs));
@@ -1863,12 +1910,6 @@ micAutoCalBtn.addEventListener("click", async () => {
     sonarCard?.classList.remove("sonar-listening");
     micAutoCalBtn.disabled = false;
   }
-});
-
-emitChirpBtn.addEventListener("click", () => {
-  if (!audioEngine.unlocked) completeUnlock(false);
-  wsClient.send({ type: "acoustic_chirp", target_id: mySpeakerId });
-  acousticResultText.textContent = "Sweeping 2 kHz → 7 kHz test tone…";
 });
 
 // ------------------------------------------------------------------
@@ -2388,7 +2429,7 @@ speakerList.addEventListener("click", (e) => {
 
   if (action === "make-leader") wsClient.send({ type: "assign_leader", target_id: targetId });
   else if (action === "ping") wsClient.send({ type: "identify_speaker", target_id: targetId });
-  else if (action === "sweep") wsClient.send({ type: "acoustic_chirp", target_id: targetId });
+  else if (action === "remove-speaker") wsClient.send({ type: "remove_speaker", target_id: targetId });
   else if (action === "toggle-mute") {
     const sp = roomState?.speakers?.find((s) => s.id === targetId);
     wsClient.send({ type: "update_speaker", target_id: targetId, fields: { muted: !(sp?.muted ?? false) } });
@@ -2659,6 +2700,11 @@ function handleInitialRoute(push = false) {
   const roomMatch = location.pathname.match(/^\/room\/([A-Za-z0-9_-]+)/);
   if (roomMatch) {
     attemptEnterRoom(roomMatch[1], "", true);
+    return;
+  }
+  const roomQuery = params.get("room");
+  if (roomQuery) {
+    attemptEnterRoom(roomQuery, "", true);
     return;
   }
   if (location.pathname.startsWith("/join")) {
