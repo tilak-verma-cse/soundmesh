@@ -1,11 +1,11 @@
 {
-  "name": "SoundMesh Multi-Speaker Sync",
+  "name": "SoundMesh — Synchronized Spatial Audio",
   "short_name": "SoundMesh",
-  "description": "Turn phones, tablets, and laptops into a millisecond-synced YouTube Music speaker array.",
+  "description": "Turn phones, tablets, and laptops into a phase-locked spatial sound system.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#090b10",
-  "theme_color": "#090b10",
+  "background_color": "#0b0b0e",
+  "theme_color": "#0b0b0e",
   "orientation": "any",
   "icons": [
     {
