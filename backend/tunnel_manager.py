@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import platform
@@ -73,19 +75,34 @@ class TunnelManager:
             raise RuntimeError("Install cloudflared via 'brew install cloudflared' on macOS.")
 
         download_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
+        checksum_url = f"{download_url}.sha256"
         tmp_dest = dest.with_suffix(".download")
 
         logger.info("Downloading official cloudflared from %s...", download_url)
+        hasher = hashlib.sha256()
         async with httpx.AsyncClient(follow_redirects=True, timeout=90.0) as client:
+            sha_resp = await client.get(checksum_url)
+            sha_resp.raise_for_status()
+            sha_tokens = sha_resp.text.strip().split()
+            expected_sha = sha_tokens[0].lower() if sha_tokens else ""
+            if len(expected_sha) != 64 or any(c not in "0123456789abcdef" for c in expected_sha):
+                raise RuntimeError("Invalid SHA-256 manifest returned for cloudflared release.")
+
             async with client.stream("GET", download_url) as resp:
                 resp.raise_for_status()
                 with tmp_dest.open("wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=131072):
+                        hasher.update(chunk)
                         f.write(chunk)
 
         if not tmp_dest.is_file() or tmp_dest.stat().st_size < 1_000_000:
             tmp_dest.unlink(missing_ok=True)
             raise RuntimeError("Downloaded cloudflared binary was incomplete.")
+
+        actual_sha = hasher.hexdigest().lower()
+        if not hmac.compare_digest(actual_sha, expected_sha):
+            tmp_dest.unlink(missing_ok=True)
+            raise RuntimeError("SHA-256 checksum verification failed for downloaded cloudflared binary.")
 
         tmp_dest.replace(dest)
         if os.name != "nt":

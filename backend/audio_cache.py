@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from backend.config import (
     MAX_CACHE_FILES,
     find_deno_executable,
 )
+from backend.security import validate_audio_magic_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,11 @@ MIME_BY_EXT: dict[str, str] = {
     ".opus": "audio/ogg",
     ".ogg": "audio/ogg",
     ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
 }
+
+UPLOAD_EXTS: set[str] = {".mp3", ".m4a", ".wav", ".ogg", ".webm", ".mp4", ".flac"}
 
 AUDIO_EXTS: tuple[str, ...] = tuple(MIME_BY_EXT.keys())
 
@@ -56,6 +62,7 @@ class AudioCache:
         self.max_bytes = max_bytes
         self.deno_path = find_deno_executable()
         self._in_flight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._download_sem = asyncio.Semaphore(2)
 
         if self.deno_path:
             deno_dir = str(Path(self.deno_path).parent)
@@ -101,6 +108,15 @@ class AudioCache:
         url = f"https://www.youtube.com/watch?v={video_id}"
         outtmpl = str(self.cache_dir / f"{video_id}.%(ext)s")
 
+        def _reject_live_or_huge(info_dict: dict[str, Any], *, incomplete: bool = False) -> str | None:
+            _ = incomplete
+            if info_dict.get("is_live") or info_dict.get("live_status") == "is_live":
+                return "Live streams are not supported for cached sync playback."
+            dur = float(info_dict.get("duration") or 0.0)
+            if dur > 14400:  # 4 hours max
+                return "Track exceeds maximum allowed duration (4 hours)."
+            return None
+
         ydl_opts: dict[str, Any] = {
             "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=webm]/bestaudio/best[ext=mp4]/best",
             "outtmpl": outtmpl,
@@ -109,6 +125,8 @@ class AudioCache:
             "no_warnings": True,
             "retries": 3,
             "socket_timeout": 15,
+            "max_filesize": config.MAX_AUDIO_DOWNLOAD_BYTES,
+            "match_filter": _reject_live_or_huge,
         }
         if self.deno_path:
             ydl_opts["js_runtimes"] = {"deno": {"path": self.deno_path}}
@@ -215,9 +233,16 @@ class AudioCache:
                 "duration_sec": duration,
             }
 
+        if video_id.startswith("local_"):
+            raise FileNotFoundError("Uploaded local track expired from cache.")
+
         task = self._in_flight.get(video_id)
         if task is None:
-            task = asyncio.create_task(asyncio.to_thread(self._download_sync, video_id))
+            async def _run_bounded() -> dict[str, Any]:
+                async with self._download_sem:
+                    return await asyncio.to_thread(self._download_sync, video_id)
+
+            task = asyncio.create_task(_run_bounded())
             self._in_flight[video_id] = task
 
         try:
@@ -242,3 +267,40 @@ class AudioCache:
                 logger.debug("Prefetch failed for %s: %s", video_id, exc)
 
         asyncio.create_task(_bg())
+
+    async def save_uploaded_audio(
+        self, filename: str, content: bytes, title: str = ""
+    ) -> dict[str, Any]:
+        """Persist a locally uploaded MP3/WAV/M4A/OGG/FLAC track into the cache."""
+        if not content or len(content) > config.MAX_UPLOAD_BYTES:
+            raise ValueError("Uploaded file is empty or exceeds 30 MB limit.")
+        ext = Path(filename or "track.mp3").suffix.lower()
+        if ext not in UPLOAD_EXTS:
+            raise ValueError(f"Unsupported audio format: {ext}")
+        if not validate_audio_magic_bytes(ext, content):
+            raise ValueError("Uploaded file failed audio header validation.")
+
+        video_id = f"local_{secrets.token_hex(6)}"
+        dest = self.cache_dir / f"{video_id}{ext}"
+        await asyncio.to_thread(dest.write_bytes, content)
+
+        clean_title = (title or Path(filename or "Uploaded Track").stem)[:80]
+        mime = MIME_BY_EXT[ext]
+        meta = {
+            "video_id": video_id,
+            "title": clean_title,
+            "artist": "Local Upload",
+            "duration_sec": 0.0,
+            "ext": ext,
+            "mime_type": mime,
+        }
+        self._meta_path(video_id).write_text(json.dumps(meta), encoding="utf-8")
+        self._touch_file(dest)
+        self._prune_cache(protected_id=video_id)
+        return {
+            "video_id": video_id,
+            "title": clean_title,
+            "artist": "Local Upload",
+            "path": dest,
+            "mime_type": mime,
+        }

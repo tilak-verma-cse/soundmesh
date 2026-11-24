@@ -1,0 +1,18 @@
+{
+  "name": "SoundMesh Multi-Speaker Sync",
+  "short_name": "SoundMesh",
+  "description": "Turn phones, tablets, and laptops into a millisecond-synced YouTube Music speaker array.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090b10",
+  "theme_color": "#090b10",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

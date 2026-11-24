@@ -11,6 +11,12 @@ services:
         value: "true"
       - key: SOUNDMESH_SECRET_KEY
         generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SOUNDMESH_FRONTEND_URL
+        sync: false
+      - key: SOUNDMESH_ALLOWED_ORIGINS
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET

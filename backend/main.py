@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
-import uuid
+import secrets
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlencode
 
 import qrcode
-from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,6 +25,13 @@ from backend.auth_service import AuthService
 from backend.db import Database
 from backend.models import AuthProvider, DeviceType, Track
 from backend.room_manager import RoomManager
+from backend.security import (
+    SlidingWindowRateLimiter,
+    is_allowed_ws_origin,
+    is_trusted_qr_url,
+    sign_room_join_ticket,
+    verify_room_join_ticket,
+)
 from backend.tunnel_manager import TunnelManager
 from backend.ytmusic_service import YTMusicService
 
@@ -34,6 +43,7 @@ audio_cache = AudioCache()
 ytmusic_service = YTMusicService()
 room_manager = RoomManager(db=db, audio_cache=audio_cache)
 tunnel_manager = TunnelManager()
+rate_limiter = SlidingWindowRateLimiter()
 
 
 @asynccontextmanager
@@ -63,10 +73,37 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="SoundMesh Multi-Room Music Sync", lifespan=lifespan)
 
+_allowed_origins = config.get_allowed_origins()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Room-Join-Ticket"],
+)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Any) -> Response:
+    resp: Response = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault(
+        "Permissions-Policy", "camera=(), geolocation=(), microphone=(self)"
+    )
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+    )
+    return resp
+
 if (config.FRONTEND_DIR / "css").is_dir():
     app.mount("/css", StaticFiles(directory=str(config.FRONTEND_DIR / "css")), name="css")
 if (config.FRONTEND_DIR / "js").is_dir():
     app.mount("/js", StaticFiles(directory=str(config.FRONTEND_DIR / "js")), name="js")
+if (config.FRONTEND_DIR / "icons").is_dir():
+    app.mount("/icons", StaticFiles(directory=str(config.FRONTEND_DIR / "icons")), name="icons")
 
 
 # ------------------------------------------------------------------
@@ -88,6 +125,19 @@ class VerifyRoomPayload(BaseModel):
     passcode: str = ""
 
 
+class ExchangeTicketPayload(BaseModel):
+    ticket: str = ""
+
+
+class SpeakerPresetPayload(BaseModel):
+    name: str = ""
+    role: str = "stereo"
+    offset_ms: float = 0.0
+    eq_preset: str = "flat"
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+
+
 def _generate_qr_png_bytes(url: str) -> bytes:
     qr = qrcode.QRCode(version=None, box_size=8, border=2)
     qr.add_data(url)
@@ -107,15 +157,36 @@ def _annotate_cached(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _get_current_user(request: Request) -> dict[str, Any] | None:
-    token = request.cookies.get(config.SESSION_COOKIE_NAME)
+    auth_header = request.headers.get("authorization", "")
+    token = ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+    if not token:
+        token = request.cookies.get(config.SESSION_COOKIE_NAME) or ""
     if not token:
         return None
     return db.get_user_by_session_token(token)
 
 
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "unknown")[:64]
+
+
+def _enforce_rate_limit(bucket: str, limit: int, window_sec: float) -> None:
+    if not rate_limiter.allow(bucket, limit=limit, window_sec=window_sec):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait a moment and try again.",
+        )
+
+
 def _set_session_cookie(response: Response, token: str, request: Request) -> None:
-    base_url = config.resolve_base_url(request)
-    is_https = base_url.startswith("https://")
+    fwd_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    req_scheme = fwd_proto or request.url.scheme.lower()
+    is_https = req_scheme == "https" or config.PUBLIC_URL.startswith("https://")
     response.set_cookie(
         key=config.SESSION_COOKIE_NAME,
         value=token,
@@ -148,6 +219,20 @@ async def serve_join() -> FileResponse:
     return FileResponse(config.FRONTEND_DIR / "index.html")
 
 
+@app.get("/manifest.json")
+async def serve_manifest() -> FileResponse:
+    return FileResponse(
+        config.FRONTEND_DIR / "manifest.json", media_type="application/manifest+json"
+    )
+
+
+@app.get("/sw.js")
+async def serve_sw() -> FileResponse:
+    return FileResponse(
+        config.FRONTEND_DIR / "sw.js", media_type="application/javascript"
+    )
+
+
 # ------------------------------------------------------------------
 # Auth Endpoints (Google OAuth PKCE + Guest)
 # ------------------------------------------------------------------
@@ -172,11 +257,42 @@ async def auth_me(request: Request) -> dict[str, Any]:
 
 @app.post("/api/auth/guest")
 async def auth_guest(payload: GuestAuthPayload, request: Request) -> JSONResponse:
+    _enforce_rate_limit(f"guest_auth:{_client_ip(request)}", limit=20, window_sec=60.0)
     existing = _get_current_user(request)
     user, token = auth_service.create_or_update_guest(payload.name, existing_user=existing)
-    resp = JSONResponse({"user": user})
+    resp = JSONResponse({"user": user, "session_token": token})
     _set_session_cookie(resp, token, request)
     return resp
+
+
+@app.post("/api/auth/exchange")
+async def auth_exchange_ticket(
+    payload: ExchangeTicketPayload, request: Request
+) -> JSONResponse:
+    """Exchange a 60-second single-use OAuth redirect ticket (`otk_...`) for a session token."""
+    _enforce_rate_limit(f"auth_exchange:{_client_ip(request)}", limit=20, window_sec=60.0)
+    consumed = auth_service.consume_one_time_ticket(payload.ticket.strip(), "otk")
+    if not consumed:
+        raise HTTPException(status_code=401, detail="Invalid or expired login ticket.")
+    session_token = str(consumed["session_token"])
+    user = db.get_user_by_session_token(session_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Session not found.")
+    resp = JSONResponse({"user": user, "session_token": session_token})
+    _set_session_cookie(resp, session_token, request)
+    return resp
+
+
+@app.post("/api/auth/ws-ticket")
+async def auth_ws_ticket(request: Request) -> dict[str, Any]:
+    """Issue a 30-second single-use WebSocket ticket so raw session tokens stay out of URLs."""
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    ws_ticket = auth_service.issue_one_time_ticket(
+        {"user_id": user["id"]}, prefix="wst", ttl_sec=30
+    )
+    return {"ws_ticket": ws_ticket}
 
 
 @app.get("/api/auth/google/login")
@@ -220,23 +336,61 @@ async def auth_google_callback(
     except Exception as exc:
         logger.warning("Google OAuth callback error: %s", exc)
         return RedirectResponse(
-            url=f"/?{urlencode({'auth_error': str(exc)})}", status_code=302
+            url=f"/?{urlencode({'auth_error': 'oauth_exchange_failed'})}", status_code=302
         )
 
     safe_next = auth_service.sanitize_next_url(next_url)
-    resp = RedirectResponse(url=safe_next, status_code=302)
+    if config.FRONTEND_URL:
+        otk = auth_service.issue_one_time_ticket(
+            {"session_token": session_token}, prefix="otk", ttl_sec=60
+        )
+        target = f"{config.FRONTEND_URL}{safe_next}#auth_token={otk}"
+        resp = RedirectResponse(url=target, status_code=302)
+    else:
+        resp = RedirectResponse(url=safe_next, status_code=302)
     _set_session_cookie(resp, session_token, request)
     return resp
 
 
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request) -> JSONResponse:
-    token = request.cookies.get(config.SESSION_COOKIE_NAME)
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    if not token:
+        token = request.cookies.get(config.SESSION_COOKIE_NAME) or ""
     if token:
         db.delete_session(token)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(config.SESSION_COOKIE_NAME, path="/")
     return resp
+
+
+@app.get("/api/me/preset/{device_id}")
+async def get_my_preset(device_id: str, request: Request) -> dict[str, Any]:
+    user = _get_current_user(request)
+    if not user:
+        return {"preset": None}
+    return {"preset": db.get_speaker_preset(user["id"], device_id[:36])}
+
+
+@app.put("/api/me/preset/{device_id}")
+async def save_my_preset(
+    device_id: str, payload: SpeakerPresetPayload, request: Request
+) -> dict[str, Any]:
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    preset = db.save_speaker_preset(
+        user_id=user["id"],
+        device_id=device_id[:36],
+        name=payload.name[:36],
+        role=payload.role,
+        offset_ms=payload.offset_ms,
+        eq_preset=payload.eq_preset,
+        pos_x=payload.pos_x,
+        pos_y=payload.pos_y,
+    )
+    return {"preset": preset}
 
 
 # ------------------------------------------------------------------
@@ -260,7 +414,8 @@ async def my_playlists(request: Request) -> dict[str, Any]:
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed loading YouTube playlists: {exc}")
+        logger.warning("Failed loading YouTube playlists: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed loading YouTube playlists.")
 
 
 @app.get("/api/me/playlists/{playlist_id}/tracks")
@@ -280,7 +435,8 @@ async def my_playlist_tracks(playlist_id: str, request: Request) -> dict[str, An
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed loading playlist tracks: {exc}")
+        logger.warning("Failed loading playlist tracks for %s: %s", playlist_id, exc)
+        raise HTTPException(status_code=502, detail="Failed loading playlist tracks.")
 
 
 # ------------------------------------------------------------------
@@ -298,9 +454,11 @@ async def list_rooms(request: Request) -> dict[str, Any]:
 
 @app.post("/api/rooms")
 async def create_room(payload: CreateRoomPayload, request: Request) -> dict[str, Any]:
+    _enforce_rate_limit(f"create_room:{_client_ip(request)}", limit=12, window_sec=60.0)
     user = _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Sign in with Google or Guest first.")
+    await room_manager.evict_idle_rooms()
     room = room_manager.create_room(
         name=payload.name,
         owner_user=user,
@@ -311,20 +469,40 @@ async def create_room(payload: CreateRoomPayload, request: Request) -> dict[str,
 
 
 @app.get("/api/rooms/{room_code}")
-async def get_room(room_code: str) -> dict[str, Any]:
+async def get_room(room_code: str, request: Request) -> dict[str, Any]:
     room = room_manager.get_or_load_room(room_code)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found.")
-    return {"room": room.get_summary()}
+    summary = room.get_summary()
+    user = _get_current_user(request)
+    is_owner = bool(user and room.owner_user_id and user["id"] == room.owner_user_id)
+    join_ticket = request.headers.get("x-room-join-ticket", "").strip()
+    is_verified = verify_room_join_ticket(join_ticket, room.room_code)
+
+    if (room.has_passcode or not room.is_public) and not (is_owner or is_verified):
+        summary["owner_user_id"] = ""
+        summary["owner_name"] = ""
+        summary["leader_name"] = "Protected Room"
+        summary["leader_avatar"] = ""
+        summary["now_playing_title"] = ""
+        summary["now_playing_artist"] = ""
+        summary["now_playing_thumb"] = ""
+    return {"room": summary}
 
 
 @app.post("/api/rooms/{room_code}/verify")
-async def verify_room(room_code: str, payload: VerifyRoomPayload) -> dict[str, Any]:
-    room = room_manager.get_or_load_room(room_code)
+async def verify_room(
+    room_code: str, payload: VerifyRoomPayload, request: Request
+) -> dict[str, Any]:
+    clean = room_code.strip().upper()
+    _enforce_rate_limit(f"room_verify:{_client_ip(request)}:{clean}", limit=8, window_sec=60.0)
+    room = room_manager.get_or_load_room(clean)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found.")
     ok = room_manager.verify_passcode(room.room_code, payload.passcode)
-    return {"ok": ok}
+    if ok:
+        return {"ok": True, "join_ticket": sign_room_join_ticket(room.room_code)}
+    return {"ok": False}
 
 
 @app.delete("/api/rooms/{room_code}")
@@ -343,12 +521,17 @@ async def delete_room(room_code: str, request: Request) -> dict[str, Any]:
 
 def _build_room_info_payload(room_code: str, request: Request) -> dict[str, Any]:
     clean_code = room_code.strip().upper()
-    lan_ips = config.get_lan_ips()
-    join_urls: list[str] = []
     public_url = config.get_public_url()
+    is_cloud_public = bool(config.PUBLIC_URL or config.FRONTEND_URL)
+    lan_ips = [] if is_cloud_public else config.get_lan_ips()
+    join_urls: list[str] = []
+    if config.FRONTEND_URL:
+        join_urls.append(f"{config.FRONTEND_URL}/room/{clean_code}")
     if public_url:
-        join_urls.append(f"{public_url}/room/{clean_code}")
-    else:
+        candidate_pub = f"{public_url}/room/{clean_code}"
+        if candidate_pub not in join_urls:
+            join_urls.append(candidate_pub)
+    elif not config.FRONTEND_URL:
         base_url = config.resolve_base_url(request)
         if base_url.startswith("https://"):
             join_urls.append(f"{base_url}/room/{clean_code}")
@@ -358,6 +541,9 @@ def _build_room_info_payload(room_code: str, request: Request) -> dict[str, Any]
         if candidate not in join_urls:
             join_urls.append(candidate)
 
+    if not join_urls:
+        join_urls.append(f"{config.resolve_base_url(request)}/room/{clean_code}")
+
     primary_url = join_urls[0]
     png_bytes = _generate_qr_png_bytes(primary_url)
     qr_data_uri = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
@@ -365,7 +551,7 @@ def _build_room_info_payload(room_code: str, request: Request) -> dict[str, Any]
         "room_code": clean_code,
         "port": config.PORT,
         "lan_ips": lan_ips,
-        "primary_ip": lan_ips[0],
+        "primary_ip": lan_ips[0] if lan_ips else "",
         "public_url": public_url,
         "join_url": primary_url,
         "join_urls": join_urls,
@@ -434,17 +620,26 @@ async def server_info(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/qr")
-async def qr_image(url: str = Query(..., min_length=4, max_length=512)) -> Response:
+async def qr_image(
+    request: Request, url: str = Query(..., min_length=4, max_length=512)
+) -> Response:
+    if not is_trusted_qr_url(url, request.headers.get("host", "")):
+        raise HTTPException(
+            status_code=400,
+            detail="QR generation is restricted to SoundMesh room and join links.",
+        )
     png_bytes = _generate_qr_png_bytes(url)
     return Response(content=png_bytes, media_type="image/png")
 
 
 @app.get("/api/search")
 async def search_music(
+    request: Request,
     q: str = Query("", max_length=400),
     filter: str = Query("songs"),
     limit: int = Query(20, ge=1, le=50),
 ) -> dict[str, Any]:
+    _enforce_rate_limit(f"search:{_client_ip(request)}", limit=45, window_sec=60.0)
     try:
         result = await ytmusic_service.search(q, filter_type=filter, limit=limit)
         if isinstance(result.get("tracks"), list):
@@ -452,7 +647,7 @@ async def search_music(
         return result
     except Exception as exc:
         logger.exception("Search error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"YouTube Music search failed: {exc}")
+        raise HTTPException(status_code=502, detail="YouTube Music search failed.")
 
 
 @app.get("/api/playlist/{playlist_id}")
@@ -464,7 +659,8 @@ async def get_playlist(
         _annotate_cached(result.get("tracks", []))
         return result
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to load playlist: {exc}")
+        logger.warning("Playlist load error (%s): %s", playlist_id, exc)
+        raise HTTPException(status_code=502, detail="Failed to load playlist.")
 
 
 @app.get("/api/album/{browse_id}")
@@ -474,7 +670,8 @@ async def get_album(browse_id: str) -> dict[str, Any]:
         _annotate_cached(result.get("tracks", []))
         return result
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to load album: {exc}")
+        logger.warning("Album load error (%s): %s", browse_id, exc)
+        raise HTTPException(status_code=502, detail="Failed to load album.")
 
 
 @app.get("/api/related/{video_id}")
@@ -489,7 +686,92 @@ async def get_related(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to load radio: {exc}")
+        logger.warning("Related radio load error (%s): %s", video_id, exc)
+        raise HTTPException(status_code=502, detail="Failed to load radio tracks.")
+
+
+@app.get("/api/lyrics/{video_id}")
+async def get_lyrics(video_id: str) -> dict[str, Any]:
+    try:
+        validate_video_id(video_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return await ytmusic_service.get_lyrics(video_id)
+
+
+@app.post("/api/rooms/{room_code}/upload")
+async def upload_room_audio(
+    room_code: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    _enforce_rate_limit(f"upload:{_client_ip(request)}", limit=10, window_sec=60.0)
+    room = room_manager.get_or_load_room(room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found.")
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in before uploading audio.")
+
+    is_owner = bool(room.owner_user_id and user["id"] == room.owner_user_id)
+    in_room = any(c.state.user_id == user["id"] for c in room.speakers.values())
+    join_ticket = request.headers.get("x-room-join-ticket", "").strip()
+    if room.has_passcode and not (
+        is_owner or in_room or verify_room_join_ticket(join_ticket, room.room_code)
+    ):
+        raise HTTPException(status_code=403, detail="Room passcode verification required.")
+    if (
+        room.speakers
+        and not is_owner
+        and not (
+            room.allow_guest_control
+            or room.allow_collab_queue
+            or room.leader_user_id == user["id"]
+        )
+    ):
+        raise HTTPException(
+            status_code=403, detail="Only the Room Leader can upload tracks right now."
+        )
+
+    cl_header = request.headers.get("content-length")
+    if cl_header:
+        try:
+            if int(cl_header) > config.MAX_UPLOAD_BYTES + 65536:
+                raise HTTPException(
+                    status_code=413, detail="Uploaded file exceeds 30 MB limit."
+                )
+        except ValueError:
+            pass
+
+    # Stream in bounded 64 KB chunks so oversized payloads never exhaust RAM
+    buf = bytearray()
+    while True:
+        chunk = await file.read(65536)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > config.MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413, detail="Uploaded file exceeds 30 MB limit."
+            )
+
+    try:
+        saved = await audio_cache.save_uploaded_audio(
+            file.filename or "upload.mp3", bytes(buf)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    track = Track(
+        video_id=saved["video_id"],
+        title=saved["title"],
+        artist=f"Uploaded by {user['name']}",
+        duration_sec=0.0,
+        thumbnail="",
+        cached=True,
+        source="local",
+    )
+    return {"track": track.model_dump()}
 
 
 @app.get("/api/audio/{video_id}")
@@ -499,11 +781,17 @@ async def stream_audio(video_id: str) -> FileResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    if not audio_cache.is_cached(video_id) and not room_manager.is_track_referenced(video_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Track is not queued or active in any room.",
+        )
+
     try:
         info = await audio_cache.ensure_track(video_id)
     except Exception as exc:
         logger.exception("Audio fetch error for %s: %s", video_id, exc)
-        raise HTTPException(status_code=502, detail=f"Audio unavailable: {exc}")
+        raise HTTPException(status_code=502, detail="Audio unavailable on server.")
 
     return FileResponse(
         path=info["path"],
@@ -511,6 +799,7 @@ async def stream_audio(video_id: str) -> FileResponse:
         headers={
             "Cache-Control": "public, max-age=3600",
             "Accept-Ranges": "bytes",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -530,16 +819,22 @@ def _parse_tracks(raw_list: Any) -> list[Track]:
     tracks: list[Track] = []
     if not isinstance(raw_list, list):
         return tracks
-    for item in raw_list:
+    for item in raw_list[:50]:
         if isinstance(item, dict) and item.get("video_id"):
             try:
-                tracks.append(Track(**item))
+                clean_item = {**item, "votes": []}
+                tracks.append(Track(**clean_item))
             except Exception:
                 continue
     return tracks
 
 
 async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
+    if not is_allowed_ws_origin(ws.headers.get("origin"), ws.headers.get("host", "")):
+        await ws.accept()
+        await ws.close(code=4403, reason="Forbidden WebSocket origin")
+        return
+
     room = room_manager.get_or_load_room(room_code)
     if not room:
         await ws.accept()
@@ -547,20 +842,40 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
         return
 
     qp = ws.query_params
-    session_token = ws.cookies.get(config.SESSION_COOKIE_NAME)
-    user = db.get_user_by_session_token(session_token) if session_token else None
+    user: dict[str, Any] | None = None
+    ws_ticket = (qp.get("ticket") or "").strip()
+    if ws_ticket:
+        consumed = auth_service.consume_one_time_ticket(ws_ticket, "wst")
+        if consumed and consumed.get("user_id"):
+            user = db.get_user_by_id(str(consumed["user_id"]), include_tokens=False)
 
-    passcode = (qp.get("passcode") or "").strip()
+    if not user:
+        session_token = (qp.get("token") or "").strip() or ws.cookies.get(
+            config.SESSION_COOKIE_NAME
+        )
+        user = db.get_user_by_session_token(session_token) if session_token else None
+
     is_owner = bool(user and room.owner_user_id and user["id"] == room.owner_user_id)
     if room.has_passcode and not is_owner:
-        if not room_manager.verify_passcode(room.room_code, passcode):
-            await ws.accept()
-            await ws.close(code=4403, reason="Invalid room passcode")
-            return
+        join_ticket = (qp.get("join_ticket") or "").strip()
+        if not verify_room_join_ticket(join_ticket, room.room_code):
+            ws_ip = (ws.client.host if ws.client else "unknown")[:64]
+            if not rate_limiter.allow(
+                f"room_verify:{ws_ip}:{room.room_code}", limit=8, window_sec=60.0
+            ):
+                await ws.accept()
+                await ws.close(code=4429, reason="Too many passcode attempts")
+                return
+            passcode = (qp.get("passcode") or "").strip()
+            if not room_manager.verify_passcode(room.room_code, passcode):
+                await ws.accept()
+                await ws.close(code=4403, reason="Invalid room passcode")
+                return
 
     await ws.accept()
 
-    speaker_id = (qp.get("client_id") or "").strip() or uuid.uuid4().hex[:12]
+    owner_key = str(user["id"]) if user else f"anon_{secrets.token_hex(8)}"
+    speaker_id = room.resolve_speaker_id(qp.get("client_id"), owner_key)
     raw_name = (qp.get("name") or "").strip()
     device_type = _parse_device_type(qp.get("device_type"))
     role = (qp.get("role") or "stereo").strip().lower()
@@ -600,7 +915,13 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
 
     try:
         while True:
-            msg = await ws.receive_json()
+            raw_frame = await ws.receive_text()
+            if len(raw_frame) > 65536:
+                continue
+            try:
+                msg = json.loads(raw_frame)
+            except ValueError:
+                continue
             if not isinstance(msg, dict):
                 continue
 
@@ -638,7 +959,8 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
                 if target_id:
                     await room.assign_leader(speaker_id, target_id)
             elif msg_type == "request_leader":
-                await room.request_leader(speaker_id)
+                if rate_limiter.allow(f"ws_req_ldr:{speaker_id}", limit=3, window_sec=15.0):
+                    await room.request_leader(speaker_id)
             elif msg_type == "respond_leader_request":
                 req_id = str(msg.get("requester_id") or "")
                 if req_id:
@@ -652,7 +974,11 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
             elif msg_type == "play_now":
                 track_data = msg.get("track")
                 if isinstance(track_data, dict) and track_data.get("video_id"):
-                    await room.play_now(speaker_id, Track(**track_data))
+                    try:
+                        clean_track = Track(**{**track_data, "votes": []})
+                    except Exception:
+                        continue
+                    await room.play_now(speaker_id, clean_track)
             elif msg_type == "add_to_queue":
                 tracks = _parse_tracks(msg.get("tracks"))
                 if not tracks and isinstance(msg.get("track"), dict):
@@ -707,16 +1033,27 @@ async def _handle_room_ws(ws: WebSocket, room_code: str) -> None:
             elif msg_type == "auto_assign_stereo":
                 await room.auto_assign_stereo(speaker_id)
             elif msg_type == "identify_speaker":
-                target = str(msg.get("target_id") or speaker_id)
-                await room.identify_speaker(speaker_id, target)
+                if rate_limiter.allow(f"ws_ping:{speaker_id}", limit=4, window_sec=5.0):
+                    target = str(msg.get("target_id") or speaker_id)
+                    await room.identify_speaker(speaker_id, target)
             elif msg_type == "set_calibration":
                 await room.set_calibration(speaker_id, bool(msg.get("active", False)))
+            elif msg_type == "upvote_queue":
+                await room.upvote_queue_item(speaker_id, int(msg.get("index", -1)))
+            elif msg_type == "send_reaction":
+                if rate_limiter.allow(f"ws_react:{speaker_id}", limit=6, window_sec=3.0):
+                    await room.send_reaction(speaker_id, str(msg.get("emoji") or ""))
+            elif msg_type == "acoustic_chirp":
+                if rate_limiter.allow(f"ws_chirp:{speaker_id}", limit=3, window_sec=6.0):
+                    await room.trigger_acoustic_chirp(
+                        speaker_id, str(msg.get("target_id") or speaker_id)
+                    )
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         logger.debug("WebSocket error for %s in room %s: %s", speaker_id, room.room_code, exc)
     finally:
-        await room.unregister_speaker(speaker_id)
+        await room.unregister_speaker(speaker_id, ws=ws)
 
 
 @app.websocket("/ws")

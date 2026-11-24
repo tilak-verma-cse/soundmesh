@@ -112,6 +112,30 @@ class RoomManager:
     def verify_passcode(self, code: str, passcode: str) -> bool:
         return self.db.verify_room_passcode(code, passcode)
 
+    def is_track_referenced(self, video_id: str) -> bool:
+        """Return True if `video_id` is active or queued in any hydrated room."""
+        for room in self.rooms.values():
+            if room.playback.track and room.playback.track.video_id == video_id:
+                return True
+            if any(t.video_id == video_id for t in room.queue):
+                return True
+        return False
+
+    async def evict_idle_rooms(self, max_idle_ms: float = 30 * 60 * 1000.0) -> int:
+        """Stop and unload empty non-default rooms idle for longer than `max_idle_ms`."""
+        from backend.config import server_now_ms
+
+        now = server_now_ms()
+        evicted = 0
+        for code, room in list(self.rooms.items()):
+            if code == "STUDIO" or room.speakers:
+                continue
+            if now - room.last_activity_ms >= max_idle_ms:
+                self.rooms.pop(code, None)
+                await room.stop()
+                evicted += 1
+        return evicted
+
     async def close_room(self, code: str, actor_user_id: str) -> bool:
         """Close and delete a room if actor is its owner."""
         clean = code.strip().upper()

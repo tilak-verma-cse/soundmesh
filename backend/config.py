@@ -49,12 +49,27 @@ _load_dotenv(PROJECT_ROOT / ".env")
 HOST: str = "0.0.0.0"
 PORT: int = int(os.environ.get("PORT") or os.environ.get("SOUNDMESH_PORT") or "8765")
 DB_PATH: Path = Path(os.environ.get("SOUNDMESH_DB_PATH", str(DATA_DIR / "soundmesh.db")))
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "").strip()
 PUBLIC_URL: str = os.environ.get("SOUNDMESH_PUBLIC_URL", "").strip().rstrip("/")
+FRONTEND_URL: str = os.environ.get("SOUNDMESH_FRONTEND_URL", "").strip().rstrip("/")
 AUTO_TUNNEL: bool = os.environ.get("SOUNDMESH_AUTO_TUNNEL", "").strip().lower() in (
     "1",
     "true",
     "yes",
 )
+
+
+def get_allowed_origins() -> list[str]:
+    """Return configured CORS origins plus local dev origins and FRONTEND_URL."""
+    raw = os.environ.get("SOUNDMESH_ALLOWED_ORIGINS", "").strip()
+    origins: list[str] = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+    if FRONTEND_URL and FRONTEND_URL not in origins:
+        origins.append(FRONTEND_URL)
+    for local in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+        if local not in origins:
+            origins.append(local)
+    return origins
+
 
 GOOGLE_CLIENT_ID: str = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET: str = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
@@ -65,11 +80,17 @@ GOOGLE_ENABLE_YOUTUBE_SCOPE: bool = os.environ.get(
 SESSION_COOKIE_NAME: str = "soundmesh_session"
 SESSION_TTL_SEC: int = 30 * 24 * 3600  # 30 days
 
-# Audio cache limits
+# Audio cache & upload limits
 MAX_CACHE_FILES: int = 50
 MAX_CACHE_BYTES: int = int(os.environ.get("SOUNDMESH_MAX_CACHE_MB", "500")) * 1024 * 1024
+MAX_UPLOAD_BYTES: int = 30 * 1024 * 1024  # 30 MB
+MAX_AUDIO_DOWNLOAD_BYTES: int = int(
+    os.environ.get("SOUNDMESH_MAX_DOWNLOAD_MB", "80")
+) * 1024 * 1024
 
 _runtime_public_url: str = ""
+_cached_cookie_digest: str = ""
+_cached_cookie_path: str = ""
 
 
 def set_runtime_public_url(url: str) -> None:
@@ -85,6 +106,7 @@ def get_public_url() -> str:
 
 def get_ytdlp_cookiefile() -> str | None:
     """Return path to YouTube cookies file from YTDLP_COOKIES_FILE or YTDLP_COOKIES_B64."""
+    global _cached_cookie_digest, _cached_cookie_path
     direct_path = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
     if direct_path and Path(direct_path).is_file():
         return direct_path
@@ -97,12 +119,24 @@ def get_ytdlp_cookiefile() -> str | None:
     except Exception:
         return None
 
+    import hashlib
+
+    digest = hashlib.sha256(raw).hexdigest()
+    if _cached_cookie_digest == digest and _cached_cookie_path and Path(_cached_cookie_path).is_file():
+        return _cached_cookie_path
+
     for target_dir in (DATA_DIR, Path(tempfile.gettempdir())):
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
             cookie_path = target_dir / "yt_cookies.txt"
             cookie_path.write_bytes(raw)
-            return str(cookie_path)
+            try:
+                os.chmod(cookie_path, 0o600)
+            except OSError:
+                pass
+            _cached_cookie_digest = digest
+            _cached_cookie_path = str(cookie_path)
+            return _cached_cookie_path
         except OSError:
             continue
     return None
@@ -136,18 +170,27 @@ def google_oauth_configured() -> bool:
 
 
 def resolve_base_url(request: Request) -> str:
-    """Resolve external base URL respecting SOUNDMESH_PUBLIC_URL and proxy headers."""
-    if PUBLIC_URL:
-        return PUBLIC_URL
+    """Resolve external base URL with strict host/scheme validation."""
+    pub = get_public_url()
+    if pub:
+        return pub
     forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
+    raw_scheme = forwarded_proto.split(",")[0].strip().lower() if forwarded_proto else request.url.scheme.lower()
+    scheme = "https" if raw_scheme == "https" else "http"
+
     forwarded_host = request.headers.get("x-forwarded-host", "")
-    host = (
+    candidate_host = (
         forwarded_host.split(",")[0].strip()
         if forwarded_host
         else (request.headers.get("host") or f"localhost:{PORT}")
     )
-    return f"{scheme}://{host}"
+    # Reject malformed/injected host headers (CR/LF, paths, credentials, spaces)
+    import re
+
+    if not re.match(r"^[A-Za-z0-9._:\[\]-]{1,253}$", candidate_host):
+        candidate_host = f"localhost:{PORT}"
+        scheme = "http"
+    return f"{scheme}://{candidate_host}"
 
 
 def is_private_lan_host(host_header: str) -> bool:

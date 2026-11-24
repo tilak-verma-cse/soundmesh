@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket
 
 from backend.audio_cache import AudioCache
+from backend.security import sanitize_client_id
 from backend.config import (
     CALIBRATION_INTERVAL_MS,
     PLAY_LEAD_MS,
@@ -35,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 _VALID_ROLES: set[str] = {"stereo", "left", "right", "mono", "subwoofer"}
 _VALID_REPEAT: set[str] = {"off", "all", "one"}
+_VALID_EQ_PRESETS: set[str] = {"flat", "party_bass", "hostel_boost", "vocal", "late_night"}
+_VALID_REACTIONS: set[str] = {"🔥", "❤️", "🎉", "⚡", "🎧", "🙌"}
+MAX_QUEUE_SIZE: int = 200
+MAX_BATCH_QUEUE_ADD: int = 50
 
 
 @dataclass
@@ -91,6 +97,8 @@ class SyncRoom:
         self._barrier_generation: int = -1
         self._watcher_task: asyncio.Task[None] | None = None
         self._last_telemetry_broadcast: float = 0.0
+        self._speaker_owners: dict[str, str] = {}
+        self.last_activity_ms: float = server_now_ms()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -108,8 +116,9 @@ class SyncRoom:
         if self._watcher_task and not self._watcher_task.done():
             self._watcher_task.cancel()
             try:
-                await self._watcher_task
-            except asyncio.CancelledError:
+                if self._watcher_task.get_loop() is asyncio.get_running_loop():
+                    await self._watcher_task
+            except (asyncio.CancelledError, RuntimeError):
                 pass
 
     async def _auto_advance_loop(self) -> None:
@@ -308,6 +317,29 @@ class SyncRoom:
     # Speaker Registration & Dynamic Leader Handoff
     # ------------------------------------------------------------------
 
+    def resolve_speaker_id(self, requested_id: str | None, owner_key: str) -> str:
+        """Bind `speaker_id` to `owner_key` so callers cannot overwrite or hijack other speakers."""
+        cleaned = sanitize_client_id(requested_id)
+        if cleaned:
+            existing_owner = self._speaker_owners.get(cleaned)
+            active_conn = self.speakers.get(cleaned)
+            if existing_owner is None and active_conn is None:
+                if len(self._speaker_owners) >= 500:
+                    self._speaker_owners.pop(next(iter(self._speaker_owners)), None)
+                self._speaker_owners[cleaned] = owner_key
+                return cleaned
+            if existing_owner == owner_key:
+                return cleaned
+
+        # Collision or invalid client_id: mint an unguessable fresh speaker_id
+        while True:
+            fresh = f"sp_{secrets.token_hex(5)}"
+            if fresh not in self.speakers and fresh not in self._speaker_owners:
+                if len(self._speaker_owners) >= 500:
+                    self._speaker_owners.pop(next(iter(self._speaker_owners)), None)
+                self._speaker_owners[fresh] = owner_key
+                return fresh
+
     async def register_speaker(
         self,
         speaker_id: str,
@@ -323,6 +355,20 @@ class SyncRoom:
         is_host: bool | None = None,
     ) -> SpeakerState:
         """Register or reconnect a speaker and elect a Leader if none is active."""
+        self.last_activity_ms = server_now_ms()
+        # Prevent cross-user speaker_id overwrite even when called directly
+        existing_conn = self.speakers.get(speaker_id)
+        if (
+            existing_conn is not None
+            and existing_conn.ws is not ws
+            and (
+                not user_id
+                or not existing_conn.state.user_id
+                or existing_conn.state.user_id != user_id
+            )
+        ):
+            speaker_id = f"sp_{secrets.token_hex(5)}"
+
         clean_role: SpeakerRole = role if role in _VALID_ROLES else "stereo"  # type: ignore[assignment]
         clamped_offset = max(-500.0, min(500.0, float(offset_ms)))
         resolved_user_name = (user_name or name or "Speaker")[:40]
@@ -354,6 +400,8 @@ class SyncRoom:
             connected_at=server_now_ms(),
         )
         self.speakers[speaker_id] = SpeakerConnection(state=state, ws=ws)
+        if user_id and speaker_id not in self._speaker_owners:
+            self._speaker_owners[speaker_id] = user_id
         self._sync_leader_flags()
 
         await self.send_to(
@@ -370,10 +418,18 @@ class SyncRoom:
         await self.broadcast_room_state()
         return state
 
-    async def unregister_speaker(self, speaker_id: str) -> None:
+    async def unregister_speaker(
+        self, speaker_id: str, ws: WebSocket | None = None
+    ) -> None:
+        current = self.speakers.get(speaker_id)
+        if current is None:
+            return
+        if ws is not None and current.ws is not ws:
+            return
         removed = self.speakers.pop(speaker_id, None)
         if removed is None:
             return
+        self.last_activity_ms = server_now_ms()
 
         self.pending_leader_requests.pop(speaker_id, None)
         self._check_ready_barrier()
@@ -544,6 +600,25 @@ class SyncRoom:
                 st.sync_status = "idle"
             elif not st.audio_unlocked:
                 st.sync_status = "needs_unlock"
+        if "pos_x" in fields:
+            try:
+                st.pos_x = max(-1.0, min(1.0, float(fields["pos_x"])))
+            except (TypeError, ValueError):
+                pass
+        if "pos_y" in fields:
+            try:
+                st.pos_y = max(-1.0, min(1.0, float(fields["pos_y"])))
+            except (TypeError, ValueError):
+                pass
+        if "spatial_enabled" in fields:
+            st.spatial_enabled = bool(fields["spatial_enabled"])
+        if "eq_preset" in fields and fields["eq_preset"] in _VALID_EQ_PRESETS:
+            st.eq_preset = fields["eq_preset"]
+        if "eq_bands" in fields and isinstance(fields["eq_bands"], list) and len(fields["eq_bands"]) == 5:
+            try:
+                st.eq_bands = [max(-12.0, min(12.0, float(b))) for b in fields["eq_bands"]]
+            except (TypeError, ValueError):
+                pass
 
         await self.broadcast_speakers()
 
@@ -732,15 +807,87 @@ class SyncRoom:
         except Exception as exc:
             logger.exception("Failed loading track %s: %s", track.video_id, exc)
             if self.playback.generation == generation:
+                has_next = len(self.queue) > 1 and (self.playback.queue_index + 1) < len(self.queue)
+                if has_next:
+                    await self.broadcast(
+                        {
+                            "type": "track_skipped",
+                            "title": track.title,
+                            "reason": str(exc),
+                        }
+                    )
+                    await asyncio.sleep(1.2)
+                    if self.playback.generation == generation:
+                        await self.next_track(auto=True)
+                    return
+
                 self.playback.status = "stopped"
                 self.playback.loading_phase = ""
                 self.playback.loading_error = f"Unable to load audio: {exc}"
                 await self.broadcast_room_state()
 
+    async def upvote_queue_item(self, actor_id: str, index: int) -> bool:
+        """Toggle upvote on an upcoming queued track and re-sort upcoming items."""
+        conn = self.speakers.get(actor_id)
+        if not conn:
+            return False
+        cur = self.playback.queue_index
+        if not (cur < index < len(self.queue)):
+            return False
+
+        voter_key = conn.state.user_id or conn.state.id
+        target_track = self.queue[index]
+        if voter_key in target_track.votes:
+            target_track.votes.remove(voter_key)
+        else:
+            target_track.votes.append(voter_key)
+
+        upcoming = self.queue[cur + 1 :]
+        upcoming.sort(key=lambda t: len(t.votes), reverse=True)
+        self.queue[cur + 1 :] = upcoming
+        await self.broadcast_room_state()
+        return True
+
+    async def send_reaction(self, actor_id: str, emoji: str) -> bool:
+        """Broadcast a whitelisted live emoji reaction to all room devices."""
+        conn = self.speakers.get(actor_id)
+        if not conn or emoji not in _VALID_REACTIONS:
+            return False
+        await self.broadcast(
+            {
+                "type": "reaction",
+                "emoji": emoji,
+                "user_name": conn.state.user_name or conn.state.name,
+                "user_avatar": conn.state.user_avatar,
+                "server_now_ms": server_now_ms(),
+            }
+        )
+        return True
+
+    async def trigger_acoustic_chirp(self, actor_id: str, target_id: str) -> bool:
+        """Instruct a target speaker to emit a timed acoustic calibration chirp."""
+        if not self.can_control_room(actor_id) and actor_id != target_id:
+            return False
+        if target_id not in self.speakers:
+            return False
+        await self.broadcast(
+            {
+                "type": "acoustic_chirp",
+                "emitter_id": target_id,
+                "start_server_ms": server_now_ms() + 450.0,
+            }
+        )
+        return True
+
     async def play_now(self, actor_id: str, track: Track) -> None:
         if not self.can_control_room(actor_id):
             return
+        track.votes = []
         track.cached = self.audio_cache.is_cached(track.video_id)
+        if len(self.queue) >= MAX_QUEUE_SIZE and self.queue:
+            # Drop last item if queue is at hard cap so Play Now still works for Leader
+            if self.playback.queue_index < len(self.queue) - 1:
+                self.queue.pop()
         if not self.queue or self.playback.queue_index < 0:
             self.queue.append(track)
             target_idx = len(self.queue) - 1
@@ -759,23 +906,28 @@ class SyncRoom:
     ) -> None:
         if not self.can_add_to_queue(actor_id) or not tracks:
             return
-        for t in tracks:
+        remaining_slots = max(0, MAX_QUEUE_SIZE - len(self.queue))
+        if remaining_slots == 0:
+            return
+        bounded = tracks[: min(MAX_BATCH_QUEUE_ADD, remaining_slots)]
+        for t in bounded:
+            t.votes = []
             t.cached = self.audio_cache.is_cached(t.video_id)
 
         was_empty = len(self.queue) == 0
         if play_next and self.playback.queue_index >= 0 and self.can_control_room(actor_id):
             insert_at = min(len(self.queue), self.playback.queue_index + 1)
-            for offset, t in enumerate(tracks):
+            for offset, t in enumerate(bounded):
                 self.queue.insert(insert_at + offset, t)
         else:
-            self.queue.extend(tracks)
+            self.queue.extend(bounded)
 
         if (
             play_if_idle
             and self.can_control_room(actor_id)
             and (was_empty or self.playback.status == "stopped")
         ):
-            start_idx = 0 if was_empty else max(0, len(self.queue) - len(tracks))
+            start_idx = 0 if was_empty else max(0, len(self.queue) - len(bounded))
             await self.play_queue_index(start_idx)
         else:
             await self.broadcast_room_state()

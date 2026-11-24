@@ -5,9 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#090b10" />
   <title>SoundMesh — Multi-Room YouTube Music Sync</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" href="/icons/icon.svg" />
   <link rel="stylesheet" href="/css/styles.css" />
 </head>
-<body>
+<body class="ui-minimal">
   <!-- Connection Lost Banner -->
   <div id="connectionBanner" class="connection-banner hidden" role="status">
     <span class="pulse-dot warn"></span>
@@ -21,14 +24,14 @@
         <span class="brand-mark">◈</span>
         <div class="brand-text">
           <span class="brand-name">SoundMesh</span>
-          <span class="brand-sub">Multi-Room Sync</span>
+          <span class="brand-sub">Spatial Multi-Room</span>
         </div>
       </button>
 
       <!-- Room Context Cluster (shown inside a room) -->
       <div id="roomHeaderCluster" class="room-header-cluster hidden">
         <button id="leaveRoomBtn" class="btn btn-ghost btn-xs" title="Back to Lobby">← Lobby</button>
-        <div class="room-pill" id="roomCodeBadge" title="Click to copy room code">
+        <div class="room-pill" id="roomCodeBadge" title="Click to invite / view QR">
           <span id="headerRoomName">Room</span>
           <code id="headerRoomCode">#STUDIO</code>
         </div>
@@ -36,25 +39,33 @@
           <span class="pulse-dot" id="headerSyncDot"></span>
           <span id="headerSpeakerCount">0 Speakers</span>
           <span class="divider-dot">•</span>
-          <span id="headerRttText">-- ms RTT</span>
+          <span id="headerRttText">-- ms</span>
         </div>
       </div>
     </div>
 
     <div class="topbar-right">
-      <!-- Room Controls (hidden in lobby) -->
+      <!-- 3-Mode UI Switcher (visible inside a room) -->
+      <div id="uiModeSwitcher" class="mode-switcher hidden" role="group" aria-label="Interface layout mode">
+        <button class="mode-btn active" data-ui-mode="minimal">Minimal</button>
+        <button class="mode-btn" data-ui-mode="studio">Studio Pro</button>
+        <button class="mode-btn" data-ui-mode="party">Party</button>
+      </div>
+
+      <button id="themeToggleBtn" class="icon-btn" title="Toggle Light / Dark in Minimal mode">☀</button>
+      <button id="installPwaBtn" class="btn btn-outline btn-xs hidden">📲 Install App</button>
+
+      <!-- Room Controls -->
       <div id="roomTopControls" class="room-top-controls hidden">
-        <button id="openQrBtn" class="btn btn-accent btn-sm">
-          <span>＋</span> Invite / QR
+        <button id="openQrBtn" class="btn btn-accent btn-sm">＋ Invite</button>
+        <button id="calibrateToggleBtn" class="btn btn-outline btn-sm studio-only-inline" title="Sync calibration metronome">
+          ◎ Calibrate
         </button>
-        <button id="calibrateToggleBtn" class="btn btn-outline btn-sm" title="Sync calibration metronome">
-          <span>◎</span> Calibrate
-        </button>
-        <label class="guest-toggle" id="guestControlWrap" title="Allow everyone in the room to control playback">
+        <label class="guest-toggle studio-only-inline" id="guestControlWrap" title="Allow everyone in the room to control playback">
           <input type="checkbox" id="guestControlToggle" />
           <span>Open Controls</span>
         </label>
-        <div class="master-vol-wrap">
+        <div class="master-vol-wrap studio-only-inline">
           <button id="masterMuteBtn" class="icon-btn" title="Mute all speakers">🔊</button>
           <input id="masterVolumeSlider" type="range" min="0" max="100" value="100" aria-label="Master volume" />
           <span id="masterVolumeLabel" class="mono-sm">100%</span>
@@ -70,10 +81,10 @@
   <main id="lobbyView" class="lobby-view">
     <section class="lobby-hero">
       <div class="lobby-hero-copy">
-        <span class="unlock-badge">SYNCHRONIZED MULTI-SPEAKER PLATFORM</span>
-        <h1>Play YouTube Music Across Every Device in Perfect Unison</h1>
+        <span class="unlock-badge">DECOUPLED SPATIAL MULTI-SPEAKER PLATFORM</span>
+        <h1>Turn Every Phone &amp; Laptop Into One Synced Sound System</h1>
         <p>
-          Sign in with Google to bring your personal YouTube playlists, create a Sound Room, invite friends or your own phones/laptops, and hand the <strong>👑 Room Leader</strong> crown to whoever should DJ for all speakers.
+          Sign in with Google for your personal YouTube Music playlists, spin up a Sound Room, pass the <strong>👑 Room Leader</strong> crown to any friend, and switch seamlessly between <strong>Minimal</strong>, <strong>Studio Pro</strong>, and <strong>Party Stage</strong> modes.
         </p>
       </div>
     </section>
@@ -99,7 +110,7 @@
     </div>
 
     <div id="lobbyLanNotice" class="lan-oauth-notice hidden">
-      <span>ℹ️ You are accessing this server over a local IP. Google Sign-In works on <code>localhost</code> or an <code>https://</code> public URL/tunnel. Phones on Wi-Fi can join instantly as Guests!</span>
+      <span>ℹ️ You are accessing this server over a local IP. Google Sign-In works on <code>localhost</code> or an <code>https://</code> public URL. Phones on Wi-Fi can join instantly as Guests!</span>
     </div>
 
     <div class="lobby-grid">
@@ -110,7 +121,6 @@
           <span id="accountModeBadge" class="badge-subtle">Not Signed In</span>
         </div>
 
-        <!-- Signed Out Panel -->
         <div id="lobbySignedOut" class="account-box">
           <button id="lobbyGoogleLoginBtn" class="btn btn-google btn-lg">
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -134,7 +144,6 @@
           </form>
         </div>
 
-        <!-- Signed In Panel -->
         <div id="lobbySignedIn" class="account-box hidden">
           <div class="profile-summary">
             <div id="profileAvatarWrap" class="avatar-lg"></div>
@@ -160,7 +169,7 @@
         </div>
         <form id="createRoomForm" class="stack-form">
           <label class="field-label" for="createRoomNameInput">Room Name</label>
-          <input id="createRoomNameInput" type="text" maxlength="44" placeholder="e.g. Living Room Hi-Fi" />
+          <input id="createRoomNameInput" type="text" maxlength="44" placeholder="e.g. Hostel Chill Room" />
 
           <div class="two-col-row">
             <div>
@@ -198,7 +207,6 @@
       </section>
     </div>
 
-    <!-- Live Rooms Directory -->
     <section class="lobby-directory">
       <div class="directory-head">
         <div class="filter-tabs" id="lobbyRoomTabs">
@@ -213,14 +221,17 @@
 
   <!-- ==================== ROOM STUDIO VIEW ==================== -->
   <div id="roomView" class="room-view hidden">
+    <!-- Party Lightshow Ambient Glow Layer -->
+    <div id="partyLightLayer" class="party-light-layer"></div>
+    <!-- Floating Reactions Overlay -->
+    <div id="reactionFloatLayer" class="reaction-float-layer" aria-hidden="true"></div>
+
     <!-- Tap-to-Unlock Audio Overlay -->
     <div id="unlockOverlay" class="unlock-overlay hidden" role="dialog" aria-modal="true">
       <div class="unlock-card">
         <div class="unlock-badge" id="unlockRoomBadge">SOUNDMESH ROOM</div>
-        <h1 id="unlockHeading">Join as a Synchronized Speaker</h1>
-        <p id="unlockSubtitle">
-          Tap below to unlock your device's audio engine and sync with the Room Leader.
-        </p>
+        <h1>Join as a Synchronized Speaker</h1>
+        <p>Tap below to unlock your device's audio engine and lock onto the Room Leader's clock.</p>
 
         <div class="unlock-form">
           <label class="field-label" for="unlockNameInput">Device / Speaker Name</label>
@@ -237,14 +248,10 @@
         </div>
 
         <div class="unlock-actions">
-          <button id="unlockBtn" class="btn btn-primary btn-lg">
-            <span>🔊</span> Enable Speaker &amp; Sync
-          </button>
-          <button id="controllerOnlyBtn" class="btn btn-ghost">
-            Controller Only (Mute This Device &amp; Play on Others)
-          </button>
+          <button id="unlockBtn" class="btn btn-primary btn-lg">🔊 Enable Speaker &amp; Sync</button>
+          <button id="controllerOnlyBtn" class="btn btn-ghost">Controller Only (Mute This Device)</button>
         </div>
-        <p class="unlock-hint">Tip: You can pass the 👑 Room Leader role to any device inside the room at any time.</p>
+        <p class="unlock-hint">Tip: You can switch between Minimal, Studio Pro, and Party Stage views at the top anytime.</p>
       </div>
     </div>
 
@@ -252,27 +259,35 @@
     <div id="calibrationBanner" class="calibration-banner hidden">
       <div class="cal-info">
         <span class="cal-badge">CALIBRATION PULSE ACTIVE</span>
-        <span>Every speaker is firing a click every 1.0s. Adjust a device's <strong>− / + ms</strong> offset until all clicks merge into one sharp click!</span>
+        <span>All speakers are clicking every 1.0s. Adjust offset ms (or use <strong>🎙️ Auto-Calibrate</strong> in Sync tab) until clicks align!</span>
       </div>
       <button id="stopCalibrationBtn" class="btn btn-amber btn-sm">Stop &amp; Resume Music</button>
     </div>
 
-    <!-- Main 3-Column Studio Workspace -->
+    <!-- Minimal Mode Quick Action Strip (hidden in Studio/Party) -->
+    <div id="minimalQuickBar" class="minimal-quick-bar">
+      <button id="minimalMusicDrawerBtn" class="btn btn-outline btn-sm">🎵 Music &amp; Queue</button>
+      <div class="minimal-leader-pill" id="minimalLeaderSummary">👑 Leader: --</div>
+      <button id="minimalAudioDrawerBtn" class="btn btn-accent btn-sm">⚙ Speakers &amp; Audio</button>
+    </div>
+
+    <!-- Main 3-Panel Adaptive Workspace -->
     <main class="workspace" id="mainWorkspace">
-      <!-- Panel 1: YouTube Music Search & Personal Library -->
-      <section class="panel panel-search" data-tab="search">
+      <!-- PANEL 1: YouTube Music, Library & Local Upload -->
+      <section class="panel panel-search" id="panelSearch" data-tab="search">
         <div class="panel-header">
-          <h2>YouTube Music</h2>
-          <span class="badge-subtle">Catalog &amp; Library</span>
+          <h2>Music Catalog</h2>
+          <div class="panel-header-tools">
+            <label class="btn btn-outline btn-xs upload-label" title="Upload local MP3 / WAV / M4A">
+              📁 Upload
+              <input id="localAudioFileInput" type="file" accept=".mp3,.m4a,.wav,.ogg,.webm,.mp4,.flac,audio/*" class="hidden" />
+            </label>
+            <button class="btn btn-ghost btn-xs drawer-close-btn" data-close-drawer="search">✕</button>
+          </div>
         </div>
 
         <form id="searchForm" class="search-bar">
-          <input
-            id="searchInput"
-            type="search"
-            placeholder="Search songs, artists, or paste YT Music link…"
-            autocomplete="off"
-          />
+          <input id="searchInput" type="search" placeholder="Search songs, artists, or paste YT Music link…" autocomplete="off" />
           <button type="submit" class="btn btn-primary btn-sm" id="searchSubmitBtn">Search</button>
         </form>
 
@@ -308,17 +323,17 @@
         <div id="searchResults" class="scroll-list">
           <div class="empty-state">
             <div class="empty-icon">🎵</div>
-            <p>Search any song on YouTube Music, open <strong>★ My Library</strong> for your Google playlists, or paste a YouTube link.</p>
+            <p>Search any song on YouTube Music, open <strong>★ My Library</strong> for your Google playlists, or upload a local MP3/WAV.</p>
           </div>
         </div>
       </section>
 
-      <!-- Panel 2: Now Playing + Visualizer + Queue -->
-      <section class="panel panel-stage" data-tab="stage">
+      <!-- PANEL 2: Now Playing Stage, Lyrics, Reactions & Upvote Queue -->
+      <section class="panel panel-stage" id="panelStage" data-tab="stage">
         <div class="stage-hero">
           <div id="stageBackdrop" class="stage-backdrop"></div>
           <div class="stage-content">
-            <div class="artwork-wrap">
+            <div class="artwork-wrap" id="artworkBeatWrap">
               <img id="nowArtwork" class="now-artwork hidden" alt="Album art" />
               <div id="nowArtworkPlaceholder" class="now-artwork-placeholder">◈</div>
               <div id="loadingOverlay" class="loading-overlay hidden">
@@ -333,7 +348,16 @@
               <div id="nowError" class="now-error hidden"></div>
             </div>
 
-            <canvas id="visualizerCanvas" class="visualizer-canvas" width="420" height="56"></canvas>
+            <!-- Live Lyrics Overlay Panel (toggleable) -->
+            <div id="lyricsPanel" class="lyrics-panel hidden">
+              <div class="lyrics-head">
+                <strong>Live Lyrics</strong>
+                <button id="closeLyricsBtn" class="btn btn-ghost btn-xs">✕</button>
+              </div>
+              <pre id="lyricsBody" class="lyrics-body">Loading lyrics…</pre>
+            </div>
+
+            <canvas id="visualizerCanvas" class="visualizer-canvas" width="420" height="54"></canvas>
 
             <div class="scrubber-wrap">
               <span id="timeCurrent" class="mono-sm">0:00</span>
@@ -350,12 +374,19 @@
             </div>
 
             <div class="stage-util-row">
-              <button id="resyncAllBtn" class="btn btn-outline btn-xs" title="Force all speakers to snap back to exact beat">
-                ⚡ Re-Sync All
-              </button>
-              <button id="loadRadioBtn" class="btn btn-outline btn-xs" title="Load YouTube Music Up Next radio into queue">
-                📻 Load YT Radio
-              </button>
+              <button id="toggleLyricsBtn" class="btn btn-outline btn-xs">📝 Lyrics</button>
+              <button id="resyncAllBtn" class="btn btn-outline btn-xs">⚡ Re-Sync</button>
+              <button id="loadRadioBtn" class="btn btn-outline btn-xs">📻 YT Radio</button>
+            </div>
+
+            <!-- Emoji Reaction Bar (prominent in Party & Studio) -->
+            <div class="reaction-bar" id="reactionBar">
+              <button class="react-btn" data-emoji="🔥">🔥</button>
+              <button class="react-btn" data-emoji="❤️">❤️</button>
+              <button class="react-btn" data-emoji="🎉">🎉</button>
+              <button class="react-btn" data-emoji="⚡">⚡</button>
+              <button class="react-btn" data-emoji="🎧">🎧</button>
+              <button class="react-btn" data-emoji="🙌">🙌</button>
             </div>
           </div>
         </div>
@@ -367,26 +398,23 @@
           </div>
           <div id="queueList" class="scroll-list queue-list">
             <div class="empty-state compact">
-              <p>Queue is empty. Add songs to play in sync across all devices.</p>
+              <p>Queue is empty. Add or upvote songs to play in sync across all devices.</p>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Panel 3: Dynamic Leader + Multi-Speaker Array -->
-      <section class="panel panel-speakers" data-tab="speaker">
+      <!-- PANEL 3: Pro Speaker Array, 2D Spatial Map, 5-Band EQ & Acoustic Sync -->
+      <section class="panel panel-speakers" id="panelSpeakers" data-tab="speaker">
         <div class="panel-header">
           <div>
-            <h2>Room Speakers &amp; Leader</h2>
-            <span class="muted-text" id="arraySubtitle">Pick who leads playback for all devices</span>
+            <h2>Audio &amp; Speakers</h2>
+            <span class="muted-text" id="arraySubtitle">Leader, Spatial 2D, EQ &amp; Sync</span>
           </div>
           <div class="speaker-header-actions">
-            <button id="autoStereoBtn" class="btn btn-outline btn-xs" title="Assign Left / Right / Mono / Sub automatically">
-              L/R Auto
-            </button>
-            <button id="pingAllBtn" class="btn btn-outline btn-xs" title="Play identify chime on all speakers">
-              🔔 Ping All
-            </button>
+            <button id="autoStereoBtn" class="btn btn-outline btn-xs" title="Auto-assign Left / Right / Mono / Sub">L/R Auto</button>
+            <button id="pingAllBtn" class="btn btn-outline btn-xs" title="Play identify chime on all speakers">🔔 Ping</button>
+            <button class="btn btn-ghost btn-xs drawer-close-btn" data-close-drawer="speaker">✕</button>
           </div>
         </div>
 
@@ -415,52 +443,104 @@
           </div>
         </div>
 
-        <!-- Pending Leader Requests Drawer (visible to Leader & Owner) -->
         <div id="leaderRequestsDrawer" class="leader-requests-drawer hidden"></div>
 
-        <!-- Local Device Sync Deck -->
-        <div id="localSpeakerDeck" class="local-deck">
-          <div class="local-deck-head">
-            <span class="deck-label">THIS DEVICE</span>
-            <span id="localSyncBadge" class="sync-badge needs_unlock">Tap to Unlock</span>
+        <!-- Sub-tabs inside Audio & Speakers Panel -->
+        <div class="filter-tabs" id="speakerSubTabs">
+          <button class="tab-chip active" data-sp-tab="list">Speakers</button>
+          <button class="tab-chip" data-sp-tab="map">2D Map</button>
+          <button class="tab-chip" data-sp-tab="eq">5-Band EQ</button>
+          <button class="tab-chip" data-sp-tab="sync">Auto-Sync</button>
+        </div>
+
+        <!-- Tab 1: Speakers List -->
+        <div id="spTabList" class="sp-tab-pane active">
+          <div id="speakerList" class="scroll-list speaker-list"></div>
+        </div>
+
+        <!-- Tab 2: 2D Spatial Room Map -->
+        <div id="spTabMap" class="sp-tab-pane hidden">
+          <div class="spatial-controls">
+            <label class="checkbox-row">
+              <input type="checkbox" id="spatialEnableToggle" />
+              <span>Enable 2D Spatial Panning on this device</span>
+            </label>
+            <button id="resetSpatialPosBtn" class="btn btn-ghost btn-xs">Center</button>
           </div>
-          <div class="local-deck-stats">
-            <div><span class="stat-k">Clock RTT</span><strong id="localRttStat">-- ms</strong></div>
-            <div><span class="stat-k">Live Drift</span><strong id="localDriftStat">-- ms</strong></div>
-            <div><span class="stat-k">Offset</span><strong id="localOffsetStat">0 ms</strong></div>
+          <div id="spatialRoomCanvas" class="spatial-room-map">
+            <div class="spatial-zone tl">FRONT L</div>
+            <div class="spatial-zone tr">FRONT R</div>
+            <div class="spatial-zone bl">REAR L</div>
+            <div class="spatial-zone br">REAR R</div>
+            <div class="spatial-listener" title="Sweet Spot (Listener)">🎧</div>
+            <div id="spatialNodesLayer" class="spatial-nodes-layer"></div>
           </div>
-          <div class="local-nudge-row">
-            <span class="stat-k">Fine-Tune Sync:</span>
-            <div class="nudge-buttons">
-              <button class="nudge-btn" data-nudge="-10">−10</button>
-              <button class="nudge-btn" data-nudge="-5">−5</button>
-              <button class="nudge-btn" data-nudge="-1">−1</button>
-              <button class="nudge-btn zero" data-nudge="reset">0ms</button>
-              <button class="nudge-btn" data-nudge="1">+1</button>
-              <button class="nudge-btn" data-nudge="5">+5</button>
-              <button class="nudge-btn" data-nudge="10">+10</button>
-            </div>
+          <p class="muted-text spatial-hint">Drag your speaker dot around the room to set live stereo pan and rear distance balance.</p>
+        </div>
+
+        <!-- Tab 3: 5-Band Equalizer & Limiter -->
+        <div id="spTabEq" class="sp-tab-pane hidden">
+          <div class="eq-presets-row" id="eqPresetButtons">
+            <button class="tab-chip active" data-eq="flat">Flat</button>
+            <button class="tab-chip" data-eq="party_bass">Party Bass</button>
+            <button class="tab-chip" data-eq="hostel_boost">Hostel Boost</button>
+            <button class="tab-chip" data-eq="vocal">Vocal</button>
+            <button class="tab-chip" data-eq="late_night">Late Night</button>
+          </div>
+          <div class="eq-sliders-grid" id="eqBandsContainer">
+            <div class="eq-band"><input type="range" min="-12" max="12" value="0" data-band="0" /><span class="mono-sm">60Hz</span><small id="eqVal0">0dB</small></div>
+            <div class="eq-band"><input type="range" min="-12" max="12" value="0" data-band="1" /><span class="mono-sm">230Hz</span><small id="eqVal1">0dB</small></div>
+            <div class="eq-band"><input type="range" min="-12" max="12" value="0" data-band="2" /><span class="mono-sm">910Hz</span><small id="eqVal2">0dB</small></div>
+            <div class="eq-band"><input type="range" min="-12" max="12" value="0" data-band="3" /><span class="mono-sm">3.6k</span><small id="eqVal3">0dB</small></div>
+            <div class="eq-band"><input type="range" min="-12" max="12" value="0" data-band="4" /><span class="mono-sm">14k</span><small id="eqVal4">0dB</small></div>
           </div>
         </div>
 
-        <div id="speakerList" class="scroll-list speaker-list"></div>
+        <!-- Tab 4: Sync Calibration & Acoustic Mic Auto-Sync -->
+        <div id="spTabSync" class="sp-tab-pane hidden">
+          <div id="localSpeakerDeck" class="local-deck">
+            <div class="local-deck-head">
+              <span class="deck-label">THIS DEVICE CLOCK</span>
+              <span id="localSyncBadge" class="sync-badge needs_unlock">Tap to Unlock</span>
+            </div>
+            <div class="local-deck-stats">
+              <div><span class="stat-k">Clock RTT</span><strong id="localRttStat">-- ms</strong></div>
+              <div><span class="stat-k">Live Drift</span><strong id="localDriftStat">-- ms</strong></div>
+              <div><span class="stat-k">Offset</span><strong id="localOffsetStat">0 ms</strong></div>
+            </div>
+            <div class="local-nudge-row">
+              <span class="stat-k">Fine-Tune Sync:</span>
+              <div class="nudge-buttons">
+                <button class="nudge-btn" data-nudge="-10">−10</button>
+                <button class="nudge-btn" data-nudge="-5">−5</button>
+                <button class="nudge-btn" data-nudge="-1">−1</button>
+                <button class="nudge-btn zero" data-nudge="reset">0ms</button>
+                <button class="nudge-btn" data-nudge="1">+1</button>
+                <button class="nudge-btn" data-nudge="5">+5</button>
+                <button class="nudge-btn" data-nudge="10">+10</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="acoustic-box">
+            <h4>🎙️ Acoustic Auto-Calibration</h4>
+            <p class="muted-text">Turn on Calibration Pulse, then let this device's mic listen to measure speaker lag &amp; distance automatically.</p>
+            <div class="acoustic-actions">
+              <button id="micAutoCalBtn" class="btn btn-primary btn-sm">🎙️ Listen &amp; Auto-Align</button>
+              <button id="emitChirpBtn" class="btn btn-outline btn-sm">📡 Emit Chirp</button>
+            </div>
+            <div id="acousticResultText" class="mono-sm"></div>
+          </div>
+        </div>
       </section>
     </main>
 
     <!-- Mobile Bottom Navigation -->
     <nav class="mobile-nav" id="mobileNav">
-      <button class="mobile-nav-btn active" data-target="speaker">
-        <span>🔊</span><small>Speakers</small>
-      </button>
-      <button class="mobile-nav-btn" data-target="stage">
-        <span>▶</span><small>Playing</small>
-      </button>
-      <button class="mobile-nav-btn" data-target="search" id="mobileSearchNav">
-        <span>🔍</span><small>Music</small>
-      </button>
-      <button class="mobile-nav-btn" data-target="queue" id="mobileQueueNav">
-        <span>☰</span><small>Queue</small>
-      </button>
+      <button class="mobile-nav-btn active" data-target="stage"><span>▶</span><small>Playing</small></button>
+      <button class="mobile-nav-btn" data-target="search" id="mobileSearchNav"><span>🔍</span><small>Music</small></button>
+      <button class="mobile-nav-btn" data-target="queue" id="mobileQueueNav"><span>☰</span><small>Queue</small></button>
+      <button class="mobile-nav-btn" data-target="speaker"><span>🔊</span><small>Speakers</small></button>
     </nav>
   </div>
 
@@ -471,9 +551,7 @@
         <h3>Invite Devices to Room <code id="qrRoomCodeText">#STUDIO</code></h3>
         <button id="closeQrBtn" class="icon-btn" aria-label="Close">✕</button>
       </div>
-      <p class="muted-text">
-        Scan this QR code with any phone, tablet, or laptop to join this room as a synchronized speaker.
-      </p>
+      <p class="muted-text">Scan this QR code or share the room link to connect more phones, tablets, and laptops.</p>
       <div class="qr-frame">
         <img id="qrImage" alt="Join SoundMesh Room QR Code" />
       </div>
@@ -483,14 +561,10 @@
       </div>
       <div class="copy-url-row">
         <input id="qrUrlInput" type="text" readonly />
-        <button id="copyUrlBtn" class="btn btn-primary btn-sm">Copy Link</button>
+        <button id="copyUrlBtn" class="btn btn-primary btn-sm">Copy</button>
+        <button id="nativeShareBtn" class="btn btn-accent btn-sm hidden">Share</button>
       </div>
-      <div id="denoWarning" class="warn-box hidden">
-        Deno runtime was not detected. Some YouTube Music streams may fail to extract.
-      </div>
-      <p class="modal-tip">
-        On local Wi-Fi (<code>http://192.168.x.x</code>), phones join smoothly in Guest mode. For Google Sign-In on phones, use an HTTPS domain or Cloudflare Tunnel (<code>start.ps1 -Tunnel</code>).
-      </p>
+      <div id="denoWarning" class="warn-box hidden">Deno runtime was not detected. Some YouTube streams may fail.</div>
     </div>
   </div>
 
@@ -517,16 +591,14 @@
         <h3>Configure Google Account Login</h3>
         <button id="closeOauthSetupBtn" class="icon-btn" aria-label="Close">✕</button>
       </div>
-      <p class="muted-text">
-        To enable <strong>Sign in with Google</strong> and personal YouTube playlists, create OAuth credentials in Google Cloud Console and add them to <code>.env</code>:
-      </p>
+      <p class="muted-text">Add Google OAuth credentials in <code>.env</code> or Render Environment Variables:</p>
       <div class="code-box">
         <div><strong>Authorized Redirect URI:</strong></div>
         <code id="oauthCallbackPreview">http://localhost:8765/api/auth/google/callback</code>
       </div>
       <pre class="code-box">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret</pre>
-      <p class="modal-tip">Restart the server after saving <code>.env</code>. You can use Guest mode right now without configuring Google OAuth.</p>
+      <p class="modal-tip">Restart the server after saving. Guest mode works right away without Google OAuth.</p>
     </div>
   </div>
 

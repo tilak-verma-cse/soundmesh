@@ -1,29 +1,58 @@
+import { apiUrl } from "./env.js";
+import { AcousticCalibrator } from "./acoustic_cal.js";
+
+export const EQ_PRESETS = {
+  flat: [0, 0, 0, 0, 0],
+  party_bass: [7, 3, -1, 2, 4],
+  hostel_boost: [5, 3, 2, 4, 3],
+  vocal: [-2, 1, 4, 3, 1],
+  late_night: [-4, 0, 1, -1, -3],
+};
+
+const EQ_BAND_CONFIG = [
+  { type: "lowshelf", freq: 60 },
+  { type: "peaking", freq: 230 },
+  { type: "peaking", freq: 910 },
+  { type: "peaking", freq: 3600 },
+  { type: "highshelf", freq: 14000 },
+];
+
 /**
- * Precision Web Audio Multi-Speaker Sync Engine.
- * Supports:
- * - Instant mobile/Safari unlock + WakeLock + MediaSession integration
- * - Live role routing (stereo, left, right, mono, subwoofer with DSP crossover)
- * - Precision decoded AudioBuffer mode with sub-ms scheduling + continuous drift PLL
- * - Streaming <audio> fallback mode for long tracks (> 12 min)
- * - Synchronized calibration click metronome + speaker identify chime
+ * Precision Web Audio Multi-Speaker Sync Engine v2.
+ * Includes:
+ * - Instant mobile/Safari unlock + WakeLock + full MediaSession controls
+ * - Channel role routing (stereo, left, right, mono, subwoofer)
+ * - 2D Spatial StereoPanner + distance attenuation
+ * - 5-Band EQ + soft DynamicsCompressor limiter
+ * - Gapless next-track pre-decode cache + continuous drift PLL
+ * - Calibration metronome + Acoustic Chirp emitter + bass energy for Party Lightshow
  */
 export class SyncAudioEngine {
-  constructor(clockSync, { onReady, onTelemetry, onIdentifyVisual } = {}) {
+  constructor(clockSync, { onReady, onTelemetry, onIdentifyVisual, onMediaAction } = {}) {
     this.clockSync = clockSync;
     this.onReady = onReady;
     this.onTelemetry = onTelemetry;
     this.onIdentifyVisual = onIdentifyVisual;
+    this.onMediaAction = onMediaAction;
 
     this.audioCtx = null;
+    this.calibrator = null;
     this.unlocked = false;
 
-    // Speaker & room gain state
+    // Speaker & room state
     this.role = "stereo";
     this.speakerVolume = 1.0;
     this.speakerMuted = false;
     this.masterVolume = 1.0;
     this.masterMuted = false;
     this.offsetMs = 0.0;
+
+    // Spatial & EQ state
+    this.posX = 0.0;
+    this.posY = 0.0;
+    this.spatialEnabled = false;
+    this.eqPreset = "flat";
+    this.eqBands = [0, 0, 0, 0, 0];
 
     // DSP graph nodes
     this.splitter = null;
@@ -36,12 +65,20 @@ export class SyncAudioEngine {
     this.dryBus = null;
     this.subBus = null;
     this.merger = null;
+    this.eqNodes = [];
+    this.panner = null;
+    this.compressor = null;
+    this.boostGain = null;
     this.outputGain = null;
     this.analyser = null;
 
-    // Decoded audio mode
+    // Decoded audio & gapless pre-decode
     this.currentBuffer = null;
     this.currentVideoId = null;
+    this._predecodedVideoId = null;
+    this._predecodedBuffer = null;
+    this._prefetchAbort = null;
+
     this._fetchAbort = null;
     this._activeSource = null;
     this._activeSourceGain = null;
@@ -66,6 +103,7 @@ export class SyncAudioEngine {
     this._calNextIndex = -1;
 
     this._wakeLock = null;
+    this._vizBins = new Uint8Array(64);
   }
 
   // ------------------------------------------------------------------
@@ -73,9 +111,10 @@ export class SyncAudioEngine {
   // ------------------------------------------------------------------
 
   unlock() {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const AudioCtx = globalThis.AudioContext || globalThis.webkitAudioContext;
     if (!this.audioCtx) {
       this.audioCtx = new AudioCtx({ latencyHint: "playback" });
+      this.calibrator = new AcousticCalibrator(this.audioCtx, this.clockSync);
       this._buildGraph();
     }
 
@@ -83,7 +122,6 @@ export class SyncAudioEngine {
       this.audioCtx.resume().catch(() => {});
     }
 
-    // Play a 1-sample silent buffer synchronously to unlock iOS Safari audio
     try {
       const silent = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
       const src = this.audioCtx.createBufferSource();
@@ -91,15 +129,15 @@ export class SyncAudioEngine {
       src.connect(this.outputGain);
       src.start(0);
     } catch {
-      // Ignore if already unlocked
+      // Ignore
     }
 
     this.unlocked = true;
     this.syncStatus = "idle";
     this._requestWakeLock();
+    this._registerMediaSessionHandlers();
     this._startLoops();
 
-    // If a track is already ready or playing, apply immediately
     if (this.playbackState) {
       this.applyPlaybackState(this.playbackState, true);
     }
@@ -114,7 +152,6 @@ export class SyncAudioEngine {
     this.gainLR = ctx.createGain();
     this.gainRL = ctx.createGain();
     this.gainRR = ctx.createGain();
-
     this.merger = ctx.createChannelMerger(2);
 
     this.dryBus = ctx.createGain();
@@ -130,12 +167,35 @@ export class SyncAudioEngine {
     this.subShelf.frequency.value = 80;
     this.subShelf.gain.value = 6.0;
 
+    // 5-band equalizer chain
+    this.eqNodes = EQ_BAND_CONFIG.map((cfg) => {
+      const f = ctx.createBiquadFilter();
+      f.type = cfg.type;
+      f.frequency.value = cfg.freq;
+      if (cfg.type === "peaking") f.Q.value = 1.1;
+      f.gain.value = 0;
+      return f;
+    });
+
+    this.panner = ctx.createStereoPanner();
+    this.panner.pan.value = 0;
+
+    this.compressor = ctx.createDynamicsCompressor();
+    this.compressor.threshold.value = -14;
+    this.compressor.knee.value = 16;
+    this.compressor.ratio.value = 3.5;
+    this.compressor.attack.value = 0.004;
+    this.compressor.release.value = 0.16;
+
+    this.boostGain = ctx.createGain();
+    this.boostGain.gain.value = 1.0;
+
     this.outputGain = ctx.createGain();
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 128;
-    this.analyser.smoothingTimeConstant = 0.78;
+    this.analyser.smoothingTimeConstant = 0.76;
 
-    // Matrix: L -> (LL -> outL, LR -> outR), R -> (RL -> outL, RR -> outR)
+    // Channel routing
     this.splitter.connect(this.gainLL, 0);
     this.splitter.connect(this.gainLR, 0);
     this.splitter.connect(this.gainRL, 1);
@@ -146,19 +206,27 @@ export class SyncAudioEngine {
     this.gainLR.connect(this.merger, 0, 1);
     this.gainRR.connect(this.merger, 0, 1);
 
-    // Dual bus: dry bypass + subwoofer crossover path
     this.merger.connect(this.dryBus);
     this.merger.connect(this.subLowpass);
     this.subLowpass.connect(this.subShelf);
     this.subShelf.connect(this.subBus);
 
-    this.dryBus.connect(this.outputGain);
-    this.subBus.connect(this.outputGain);
-
+    // Connect dry + sub into EQ -> Panner -> Limiter -> Boost -> Output -> Analyser -> Destination
+    this.dryBus.connect(this.eqNodes[0]);
+    this.subBus.connect(this.eqNodes[0]);
+    for (let i = 0; i < this.eqNodes.length - 1; i++) {
+      this.eqNodes[i].connect(this.eqNodes[i + 1]);
+    }
+    this.eqNodes[this.eqNodes.length - 1].connect(this.panner);
+    this.panner.connect(this.compressor);
+    this.compressor.connect(this.boostGain);
+    this.boostGain.connect(this.outputGain);
     this.outputGain.connect(this.analyser);
     this.analyser.connect(ctx.destination);
 
     this._applyRoleRouting(true);
+    this._applyEq(true);
+    this._applySpatial(true);
     this._applyGain(true);
   }
 
@@ -180,7 +248,7 @@ export class SyncAudioEngine {
         });
       }
     } catch {
-      // WakeLock requires HTTPS on some mobile browsers; fail silently over LAN HTTP
+      // Ignore unsupported WakeLock
     }
   }
 
@@ -194,7 +262,7 @@ export class SyncAudioEngine {
   }
 
   // ------------------------------------------------------------------
-  // Settings: Role, Volume, Mute, Offset
+  // Settings: Role, Spatial 2D, 5-Band EQ, Volume, Offset
   // ------------------------------------------------------------------
 
   setRole(role) {
@@ -224,19 +292,14 @@ export class SyncAudioEngine {
         dry = 0;
         sub = 1;
         break;
-      case "stereo":
       default:
-        ll = 1; lr = 0; rl = 0; rr = 1;
         break;
     }
 
     const set = (node, val) => {
       node.gain.cancelScheduledValues(now);
-      if (immediate) {
-        node.gain.setValueAtTime(val, now);
-      } else {
-        node.gain.setTargetAtTime(val, now, tc);
-      }
+      if (immediate) node.gain.setValueAtTime(val, now);
+      else node.gain.setTargetAtTime(val, now, tc);
     };
 
     set(this.gainLL, ll);
@@ -245,6 +308,52 @@ export class SyncAudioEngine {
     set(this.gainRR, rr);
     set(this.dryBus, dry);
     set(this.subBus, sub);
+  }
+
+  setSpatial({ pos_x, pos_y, spatial_enabled }) {
+    if (pos_x !== undefined) this.posX = Math.max(-1, Math.min(1, Number(pos_x) || 0));
+    if (pos_y !== undefined) this.posY = Math.max(-1, Math.min(1, Number(pos_y) || 0));
+    if (spatial_enabled !== undefined) this.spatialEnabled = Boolean(spatial_enabled);
+    this._applySpatial(false);
+    this._applyGain(false);
+  }
+
+  _applySpatial(immediate = false) {
+    if (!this.audioCtx || !this.panner) return;
+    const now = this.audioCtx.currentTime;
+    const pan = this.spatialEnabled ? this.posX : 0.0;
+    this.panner.pan.cancelScheduledValues(now);
+    if (immediate) this.panner.pan.setValueAtTime(pan, now);
+    else this.panner.pan.setTargetAtTime(pan, now, 0.03);
+  }
+
+  setEq({ eq_preset, eq_bands }) {
+    if (eq_preset && EQ_PRESETS[eq_preset]) {
+      this.eqPreset = eq_preset;
+      if (!eq_bands) {
+        this.eqBands = [...EQ_PRESETS[eq_preset]];
+      }
+    }
+    if (Array.isArray(eq_bands) && eq_bands.length === 5) {
+      this.eqBands = eq_bands.map((v) => Math.max(-12, Math.min(12, Number(v) || 0)));
+    }
+    this._applyEq(false);
+  }
+
+  _applyEq(immediate = false) {
+    if (!this.audioCtx || this.eqNodes.length !== 5) return;
+    const now = this.audioCtx.currentTime;
+    this.eqNodes.forEach((node, idx) => {
+      const target = this.eqBands[idx] || 0;
+      node.gain.cancelScheduledValues(now);
+      if (immediate) node.gain.setValueAtTime(target, now);
+      else node.gain.setTargetAtTime(target, now, 0.025);
+    });
+
+    const boost = this.eqPreset === "hostel_boost" ? 1.32 : this.eqPreset === "party_bass" ? 1.15 : 1.0;
+    this.boostGain.gain.cancelScheduledValues(now);
+    if (immediate) this.boostGain.gain.setValueAtTime(boost, now);
+    else this.boostGain.gain.setTargetAtTime(boost, now, 0.03);
   }
 
   setVolumes({ speakerVolume, speakerMuted, masterVolume, masterMuted }) {
@@ -257,17 +366,16 @@ export class SyncAudioEngine {
 
   _applyGain(immediate = false) {
     if (!this.audioCtx || !this.outputGain) return;
+    // Slight rear attenuation when 2D spatial map is enabled (rear speakers slightly softer)
+    const spatialGain = this.spatialEnabled ? Math.max(0.65, 1.0 - Math.max(0, this.posY) * 0.25) : 1.0;
     const effective =
       this.speakerMuted || this.masterMuted
         ? 0.0
-        : this.speakerVolume * this.masterVolume;
+        : this.speakerVolume * this.masterVolume * spatialGain;
     const now = this.audioCtx.currentTime;
     this.outputGain.gain.cancelScheduledValues(now);
-    if (immediate) {
-      this.outputGain.gain.setValueAtTime(effective, now);
-    } else {
-      this.outputGain.gain.setTargetAtTime(effective, now, 0.02);
-    }
+    if (immediate) this.outputGain.gain.setValueAtTime(effective, now);
+    else this.outputGain.gain.setTargetAtTime(effective, now, 0.02);
   }
 
   setOffsetMs(ms) {
@@ -275,17 +383,10 @@ export class SyncAudioEngine {
     const delta = Math.abs(clamped - this.offsetMs);
     this.offsetMs = clamped;
     if (this.unlocked && this.playbackState && this.playbackState.status === "playing") {
-      if (delta >= 25) {
-        this._reschedulePlaying(true);
-      } else {
-        this._runDriftCheck();
-      }
+      if (delta >= 25) this._reschedulePlaying(true);
+      else this._runDriftCheck();
     }
   }
-
-  // ------------------------------------------------------------------
-  // Hardware Output Latency Compensation
-  // ------------------------------------------------------------------
 
   _getHwLatencySec() {
     if (!this.audioCtx) return 0;
@@ -297,8 +398,36 @@ export class SyncAudioEngine {
   }
 
   // ------------------------------------------------------------------
-  // Playback Synchronization
+  // Gapless Pre-Decode & Playback Synchronization
   // ------------------------------------------------------------------
+
+  async prefetchNext(videoId) {
+    if (!this.unlocked || !this.audioCtx || !videoId) return;
+    if (this.currentVideoId === videoId || this._predecodedVideoId === videoId) return;
+
+    if (this._prefetchAbort) {
+      this._prefetchAbort.abort();
+      this._prefetchAbort = null;
+    }
+    const ctrl = new AbortController();
+    this._prefetchAbort = ctrl;
+    try {
+      const resp = await fetch(apiUrl(`/api/audio/${encodeURIComponent(videoId)}`), {
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) return;
+      const arr = await resp.arrayBuffer();
+      if (ctrl.signal.aborted) return;
+      const decoded = await this.audioCtx.decodeAudioData(arr);
+      if (ctrl.signal.aborted) return;
+      this._predecodedVideoId = videoId;
+      this._predecodedBuffer = decoded;
+    } catch {
+      // Best-effort prefetch
+    } finally {
+      if (this._prefetchAbort === ctrl) this._prefetchAbort = null;
+    }
+  }
 
   async applyPlaybackState(pb, forceResync = false) {
     const prev = this.playbackState;
@@ -322,12 +451,20 @@ export class SyncAudioEngine {
       this.audioCtx.resume().catch(() => {});
     }
 
-    // Check if track audio needs fetching/decoding
     if (pb.audio_ready && pb.audio_url) {
       if (pb.use_streaming) {
         this._prepareStreamingAudio(pb);
       } else if (this.currentVideoId !== pb.track.video_id || !this.currentBuffer) {
-        await this._loadDecodedAudio(pb.track.video_id, pb.audio_url, pb.generation);
+        // Check gapless pre-decoded buffer first!
+        if (this._predecodedVideoId === pb.track.video_id && this._predecodedBuffer) {
+          this.currentBuffer = this._predecodedBuffer;
+          this.currentVideoId = pb.track.video_id;
+          this._predecodedBuffer = null;
+          this._predecodedVideoId = null;
+          if (typeof this.onReady === "function") this.onReady(pb.generation);
+        } else {
+          await this._loadDecodedAudio(pb.track.video_id, pb.audio_url, pb.generation);
+        }
       } else if (pb.status === "loading" && typeof this.onReady === "function") {
         this.onReady(pb.generation);
       }
@@ -338,10 +475,8 @@ export class SyncAudioEngine {
       return;
     }
 
-    // Re-read latest playbackState after async decode
     const latest = this.playbackState;
     if (!latest || latest.generation !== pb.generation) {
-      // Even if generation advanced while decoding, latest state handles itself
       if (!latest || latest.status !== "playing") return;
     }
 
@@ -373,12 +508,11 @@ export class SyncAudioEngine {
     this._emitTelemetry(0);
 
     try {
-      const resp = await fetch(audioUrl, { signal: controller.signal });
+      const resp = await fetch(apiUrl(audioUrl), { signal: controller.signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const arrBuf = await resp.arrayBuffer();
       if (controller.signal.aborted) return;
 
-      // Release old buffer before decoding to keep mobile RAM low
       this.currentBuffer = null;
       this.currentVideoId = null;
 
@@ -389,9 +523,7 @@ export class SyncAudioEngine {
       this.currentVideoId = videoId;
       this._fetchAbort = null;
 
-      if (typeof this.onReady === "function") {
-        this.onReady(generation);
-      }
+      if (typeof this.onReady === "function") this.onReady(generation);
 
       if (this.playbackState && this.playbackState.status === "playing" && this.playbackState.audio_ready) {
         this._reschedulePlaying(true);
@@ -412,9 +544,10 @@ export class SyncAudioEngine {
       this._mediaSource.connect(this.splitter);
     }
 
-    if (this._streamingReadyUrl !== pb.audio_url) {
-      this._streamingReadyUrl = pb.audio_url;
-      this._audioEl.src = pb.audio_url;
+    const fullUrl = apiUrl(pb.audio_url);
+    if (this._streamingReadyUrl !== fullUrl) {
+      this._streamingReadyUrl = fullUrl;
+      this._audioEl.src = fullUrl;
       this._audioEl.load();
     }
 
@@ -439,7 +572,7 @@ export class SyncAudioEngine {
           oldSrc.stop();
         }
       } catch {
-        // Ignore already stopped
+        // Ignore
       }
     }
     if (this._audioEl && !this._audioEl.paused) {
@@ -539,9 +672,7 @@ export class SyncAudioEngine {
   _getActualBufferPositionSec() {
     if (!this.audioCtx || !this._activeSource) return 0;
     const nowCtx = this.audioCtx.currentTime;
-    if (nowCtx < this._lastRateCtxTime) {
-      return this._integratedBufferPos;
-    }
+    if (nowCtx < this._lastRateCtxTime) return this._integratedBufferPos;
     return this._integratedBufferPos + (nowCtx - this._lastRateCtxTime) * this._activeRate;
   }
 
@@ -555,18 +686,14 @@ export class SyncAudioEngine {
     const effectiveServerNow =
       this.clockSync.getServerTimeMs() - this.offsetMs + hwLatencySec * 1000;
 
-    if (effectiveServerNow < pb.anchor_server_ms) {
-      return; // Still waiting for scheduled future start
-    }
+    if (effectiveServerNow < pb.anchor_server_ms) return;
 
     const baseRate = pb.playback_rate || 1.0;
     const expectedPos =
       pb.anchor_position_sec + ((effectiveServerNow - pb.anchor_server_ms) / 1000.0) * baseRate;
 
     if (pb.use_streaming && this._audioEl) {
-      if (this._audioEl.paused) {
-        this._audioEl.play().catch(() => {});
-      }
+      if (this._audioEl.paused) this._audioEl.play().catch(() => {});
       const driftMs = (expectedPos - this._audioEl.currentTime) * 1000.0;
       this.lastDriftMs = driftMs;
       const absDrift = Math.abs(driftMs);
@@ -574,8 +701,7 @@ export class SyncAudioEngine {
         this._audioEl.playbackRate = baseRate;
         this.syncStatus = "locked";
       } else if (absDrift <= 120) {
-        const adj = Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
-        this._audioEl.playbackRate = baseRate + adj;
+        this._audioEl.playbackRate = baseRate + Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
         this.syncStatus = "syncing";
       } else {
         this._audioEl.currentTime = Math.max(0, expectedPos);
@@ -604,15 +730,13 @@ export class SyncAudioEngine {
       }
       this.syncStatus = "locked";
     } else if (absDrift <= 80) {
-      const adj = Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
-      const nextRate = baseRate + adj;
+      const nextRate = baseRate + Math.max(-0.015, Math.min(0.015, driftMs / 4000.0));
       this._integratedBufferPos = actualPos;
       this._lastRateCtxTime = nowCtx;
       this._activeRate = nextRate;
       this._activeSource.playbackRate.setTargetAtTime(nextRate, nowCtx, 0.05);
       this.syncStatus = "syncing";
     } else {
-      // Large drift (> 80ms) -> clean micro-crossfade hard resync
       this._reschedulePlaying(true);
       this.syncStatus = "syncing";
     }
@@ -631,7 +755,7 @@ export class SyncAudioEngine {
   }
 
   // ------------------------------------------------------------------
-  // Calibration Click Metronome & Identify Ping
+  // Calibration Click Metronome, Acoustic Chirp & Identify Ping
   // ------------------------------------------------------------------
 
   setCalibrationState(cal) {
@@ -652,7 +776,6 @@ export class SyncAudioEngine {
     const serverNow = this.clockSync.getServerTimeMs();
     const lookaheadMs = 200;
 
-    // Anchor shifted by speaker offset & hw latency matches exact music playback timing
     const effectiveAnchorPerfMs =
       anchorServerMs - this.clockSync.offsetMs + this.offsetMs - hwLatencyMs;
     const nowPerf = performance.now();
@@ -691,15 +814,27 @@ export class SyncAudioEngine {
     osc.stop(whenCtx + 0.025);
   }
 
+  emitTimedChirp(startServerMs) {
+    if (!this.unlocked || !this.audioCtx || !this.calibrator) return;
+    const hwLatencyMs = this._getHwLatencySec() * 1000.0;
+    const targetPerfMs = startServerMs - this.clockSync.offsetMs + this.offsetMs - hwLatencyMs;
+    const delaySec = Math.max(0.01, (targetPerfMs - performance.now()) / 1000.0);
+    this.calibrator.emitChirpAt(this.audioCtx.currentTime + delaySec, this.analyser);
+  }
+
+  async runMicAutoCalibrate() {
+    if (!this.unlocked || !this.calibrator) {
+      throw new Error("Enable speaker audio first.");
+    }
+    return await this.calibrator.measureOffsetFromPulse(this.calibrationState);
+  }
+
   playIdentifyChime() {
     if (!this.unlocked || !this.audioCtx) return;
-    if (this.audioCtx.state === "suspended") {
-      this.audioCtx.resume().catch(() => {});
-    }
+    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
     const ctx = this.audioCtx;
     const now = ctx.currentTime + 0.01;
-    const notes = [880, 1318.5];
-    notes.forEach((freq, idx) => {
+    [880, 1318.5].forEach((freq, idx) => {
       const start = now + idx * 0.14;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -710,7 +845,6 @@ export class SyncAudioEngine {
       gain.gain.exponentialRampToValueAtTime(0.45, start + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.28);
 
-      // Connect straight to analyser->destination so even muted speakers can be located
       osc.connect(gain);
       gain.connect(this.analyser);
       osc.start(start);
@@ -723,7 +857,7 @@ export class SyncAudioEngine {
   }
 
   // ------------------------------------------------------------------
-  // Visualizer & Media Session
+  // Visualizer, Beat Energy & Media Session
   // ------------------------------------------------------------------
 
   getFrequencyData(targetUint8Array) {
@@ -733,6 +867,26 @@ export class SyncAudioEngine {
     }
     this.analyser.getByteFrequencyData(targetUint8Array);
     return true;
+  }
+
+  getBassEnergy() {
+    if (!this.analyser || !this.unlocked) return 0;
+    this.analyser.getByteFrequencyData(this._vizBins);
+    let sum = 0;
+    for (let i = 0; i < 6; i++) sum += this._vizBins[i];
+    return Math.min(1, sum / (6 * 255));
+  }
+
+  _registerMediaSessionHandlers() {
+    if (!("mediaSession" in navigator) || typeof this.onMediaAction !== "function") return;
+    try {
+      navigator.mediaSession.setActionHandler("play", () => this.onMediaAction("play"));
+      navigator.mediaSession.setActionHandler("pause", () => this.onMediaAction("pause"));
+      navigator.mediaSession.setActionHandler("previoustrack", () => this.onMediaAction("prev"));
+      navigator.mediaSession.setActionHandler("nexttrack", () => this.onMediaAction("next"));
+    } catch {
+      // Some platforms restrict specific handlers
+    }
   }
 
   _updateMediaSession(pb) {
@@ -749,7 +903,7 @@ export class SyncAudioEngine {
       navigator.mediaSession.playbackState =
         pb.status === "playing" ? "playing" : pb.status === "paused" ? "paused" : "none";
     } catch {
-      // Ignore MediaSession unsupported errors
+      // Ignore
     }
   }
 }

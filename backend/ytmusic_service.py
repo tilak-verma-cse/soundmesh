@@ -420,3 +420,27 @@ class YTMusicService:
     async def get_related_tracks(self, video_id: str, limit: int = 15) -> list[dict[str, Any]]:
         """Fetch YouTube Music Radio / Up Next recommendations for a track."""
         return await asyncio.to_thread(self._get_related_sync, video_id, limit)
+
+    def _get_lyrics_sync(self, video_id: str) -> dict[str, Any]:
+        try:
+            yt = self._get_client()
+            watch = yt.get_watch_playlist(videoId=video_id, limit=1)
+            lyrics_id = (watch or {}).get("lyrics")
+            if not lyrics_id:
+                return {"video_id": video_id, "lyrics": "", "source": "", "available": False}
+            data = yt.get_lyrics(lyrics_id)
+            text = str((data or {}).get("lyrics") or "").strip()
+            source = str((data or {}).get("source") or "YouTube Music")
+            return {
+                "video_id": video_id,
+                "lyrics": text,
+                "source": source,
+                "available": bool(text),
+            }
+        except Exception as exc:
+            logger.debug("Lyrics unavailable for %s: %s", video_id, exc)
+            return {"video_id": video_id, "lyrics": "", "source": "", "available": False}
+
+    async def get_lyrics(self, video_id: str) -> dict[str, Any]:
+        """Fetch YouTube Music lyrics for a track."""
+        return await asyncio.to_thread(self._get_lyrics_sync, video_id)

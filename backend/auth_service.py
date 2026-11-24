@@ -31,6 +31,8 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 _YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 _STATE_TTL_SEC = 600
+_MAX_PENDING_STATES = 500
+_MAX_ONE_TIME_TICKETS = 1000
 
 
 def parse_iso8601_duration(iso: str) -> float:
@@ -58,6 +60,44 @@ class AuthService:
     def __init__(self, db: Database) -> None:
         self.db = db
         self._pending_states: dict[str, dict[str, Any]] = {}
+        self._one_time_tickets: dict[str, dict[str, Any]] = {}
+
+    def _prune_tickets(self) -> None:
+        now = time.time()
+        expired = [
+            k for k, v in self._one_time_tickets.items() if float(v["expires_at"]) <= now
+        ]
+        for k in expired:
+            self._one_time_tickets.pop(k, None)
+
+    def issue_one_time_ticket(
+        self, payload: dict[str, Any], prefix: str = "wst", ttl_sec: int = 45
+    ) -> str:
+        """Mint a single-use short-lived opaque ticket (`wst_...` or `otk_...`)."""
+        self._prune_tickets()
+        while len(self._one_time_tickets) >= _MAX_ONE_TIME_TICKETS:
+            self._one_time_tickets.pop(next(iter(self._one_time_tickets)), None)
+        ticket = f"{prefix}_{secrets.token_urlsafe(24)}"
+        self._one_time_tickets[ticket] = {
+            **payload,
+            "prefix": prefix,
+            "expires_at": time.time() + ttl_sec,
+        }
+        return ticket
+
+    def consume_one_time_ticket(
+        self, ticket: str, expected_prefix: str
+    ) -> dict[str, Any] | None:
+        """Atomically consume and validate a single-use short-lived ticket."""
+        if not ticket or not ticket.startswith(f"{expected_prefix}_"):
+            return None
+        self._prune_tickets()
+        entry = self._one_time_tickets.pop(ticket, None)
+        if not entry:
+            return None
+        if entry.get("prefix") != expected_prefix or float(entry["expires_at"]) <= time.time():
+            return None
+        return entry
 
     @staticmethod
     def sanitize_next_url(next_url: str | None) -> str:
@@ -78,6 +118,8 @@ class AuthService:
         ]
         for st in expired:
             self._pending_states.pop(st, None)
+        while len(self._pending_states) >= _MAX_PENDING_STATES:
+            self._pending_states.pop(next(iter(self._pending_states)), None)
 
     def build_google_auth_url(
         self,

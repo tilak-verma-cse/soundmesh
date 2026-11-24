@@ -1,9 +1,14 @@
-"""Pydantic data models representing SoundMesh tracks, speakers, leaders, and room state."""
+"""Pydantic data models representing SoundMesh v2 tracks, speakers, spatial/EQ, and room state."""
 
 from __future__ import annotations
 
+import re
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from backend.security import sanitize_thumbnail_url
+
+_TRACK_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 
 DeviceType = Literal["desktop", "mobile", "tablet"]
 SpeakerRole = Literal["stereo", "left", "right", "mono", "subwoofer"]
@@ -12,10 +17,12 @@ PlaybackStatus = Literal["stopped", "loading", "playing", "paused"]
 LoadingPhase = Literal["", "downloading", "buffering"]
 RepeatMode = Literal["off", "all", "one"]
 AuthProvider = Literal["google", "guest"]
+EqPreset = Literal["flat", "party_bass", "hostel_boost", "vocal", "late_night"]
+TrackSource = Literal["youtube", "local"]
 
 
 class Track(BaseModel):
-    """Normalized YouTube Music / YouTube track metadata."""
+    """Normalized YouTube Music / local uploaded track metadata."""
 
     video_id: str
     title: str
@@ -24,10 +31,40 @@ class Track(BaseModel):
     duration_sec: float = 0.0
     thumbnail: str = ""
     cached: bool = False
+    votes: list[str] = Field(default_factory=list)
+    source: TrackSource = "youtube"
+
+    @field_validator("video_id")
+    @classmethod
+    def _check_video_id(cls, v: str) -> str:
+        cleaned = (v or "").strip()
+        if not _TRACK_VIDEO_ID_RE.match(cleaned):
+            raise ValueError("Invalid video_id format")
+        return cleaned
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, v: str) -> str:
+        return (v or "Untitled").strip()[:200] or "Untitled"
+
+    @field_validator("artist", "album")
+    @classmethod
+    def _clean_text(cls, v: str) -> str:
+        return (v or "").strip()[:140]
+
+    @field_validator("duration_sec")
+    @classmethod
+    def _clamp_duration(cls, v: float) -> float:
+        return max(0.0, min(86400.0, float(v or 0.0)))
+
+    @field_validator("thumbnail")
+    @classmethod
+    def _clean_thumbnail(cls, v: str) -> str:
+        return sanitize_thumbnail_url(v)
 
 
 class SpeakerState(BaseModel):
-    """State and telemetry for a single connected speaker device."""
+    """State, spatial position, EQ, and telemetry for a connected speaker device."""
 
     id: str
     name: str
@@ -43,6 +80,11 @@ class SpeakerState(BaseModel):
     volume: float = Field(default=1.0, ge=0.0, le=1.0)
     muted: bool = False
     offset_ms: float = Field(default=0.0, ge=-500.0, le=500.0)
+    pos_x: float = Field(default=0.0, ge=-1.0, le=1.0)
+    pos_y: float = Field(default=0.0, ge=-1.0, le=1.0)
+    spatial_enabled: bool = False
+    eq_preset: EqPreset = "flat"
+    eq_bands: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
     audio_unlocked: bool = False
     sync_status: SyncStatus = "needs_unlock"
     rtt_ms: float = 0.0
@@ -100,6 +142,7 @@ class RoomSnapshot(BaseModel):
     leader_speaker_id: str | None = None
     leader_user_id: str | None = None
     allow_collab_queue: bool = False
+    party_lightshow: bool = False
     pending_leader_requests: list[LeaderRequest] = Field(default_factory=list)
     server_now_ms: float
     playback: PlaybackState

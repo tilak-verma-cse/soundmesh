@@ -1,5 +1,9 @@
+import { fetchWsTicket, getWsBase } from "./env.js";
+
 /**
- * Reconnecting WebSocket client with multi-room URL support and fast-path sync_pong routing.
+ * Reconnecting WebSocket client using short-lived single-use WS tickets
+ * (keeping long-lived session tokens and room passcodes out of proxy logs)
+ * and direct fast-path routing for NTP sync_pong.
  */
 export class WSClient {
   constructor({ onMessage, onConnectionChange, onFatalClose, clockSync }) {
@@ -15,23 +19,27 @@ export class WSClient {
     this.reconnectDelayMs = 500;
     this._reconnectTimer = null;
     this._intentionallyClosed = false;
+    this._connectSeq = 0;
   }
 
   connect(roomCode, params) {
     this.roomCode = (roomCode || "STUDIO").trim().toUpperCase();
     this.params = params;
     this._intentionallyClosed = false;
-    this._openSocket();
+    void this._openSocket();
   }
 
-  _buildUrl() {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  _buildUrl(wsTicket = "") {
     const qs = new URLSearchParams(this.params || {});
+    if (wsTicket) {
+      qs.set("ticket", wsTicket);
+    }
     const encodedRoom = encodeURIComponent(this.roomCode);
-    return `${proto}//${location.host}/ws/${encodedRoom}?${qs.toString()}`;
+    return `${getWsBase()}/ws/${encodedRoom}?${qs.toString()}`;
   }
 
-  _openSocket() {
+  async _openSocket() {
+    const seq = ++this._connectSeq;
     if (this._reconnectTimer !== null) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -50,7 +58,10 @@ export class WSClient {
       this.ws = null;
     }
 
-    const ws = new WebSocket(this._buildUrl());
+    const wsTicket = await fetchWsTicket();
+    if (this._intentionallyClosed || seq !== this._connectSeq) return;
+
+    const ws = new WebSocket(this._buildUrl(wsTicket));
     this.ws = ws;
 
     ws.onopen = () => {
@@ -83,8 +94,7 @@ export class WSClient {
       this.connected = false;
       this.clockSync.stop();
 
-      // Terminal room/auth close codes should not auto-reconnect endlessly
-      if (event.code === 4403 || event.code === 4404) {
+      if (event.code === 4403 || event.code === 4404 || event.code === 4429) {
         this._intentionallyClosed = true;
         if (typeof this.onFatalClose === "function") {
           this.onFatalClose(event.code, event.reason || "");
@@ -111,7 +121,7 @@ export class WSClient {
     this.reconnectDelayMs = Math.min(4000, this.reconnectDelayMs * 1.8);
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
-      this._openSocket();
+      void this._openSocket();
     }, delay);
   }
 
@@ -125,6 +135,7 @@ export class WSClient {
 
   close() {
     this._intentionallyClosed = true;
+    this._connectSeq++;
     this.clockSync.stop();
     if (this._reconnectTimer !== null) {
       clearTimeout(this._reconnectTimer);

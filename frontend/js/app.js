@@ -1,6 +1,7 @@
+import { apiFetch, apiUrl, exchangePendingOauthTicket, setSessionToken } from "./env.js";
 import { ClockSync } from "./clock_sync.js";
 import { WSClient } from "./ws_client.js";
-import { SyncAudioEngine } from "./audio_engine.js";
+import { EQ_PRESETS, SyncAudioEngine } from "./audio_engine.js";
 
 // ------------------------------------------------------------------
 // Helpers & Local Identity
@@ -43,15 +44,28 @@ function formatTime(sec) {
   const hrs = Math.floor(s / 3600);
   const mins = Math.floor((s % 3600) / 60);
   const secs = s % 60;
-  if (hrs > 0) {
-    return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  }
+  if (hrs > 0) return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+function safeImageUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("data:image/png;base64,")) return s;
+  if (/["'()\\\s<>]/.test(s)) return "";
+  try {
+    const u = new URL(s);
+    if (u.protocol === "https:") return u.href;
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 function avatarHtml(name, avatarUrl, sizeClass = "avatar-sm") {
-  if (avatarUrl) {
-    return `<img class="${sizeClass}" src="${escapeHtml(avatarUrl)}" alt="" referrerpolicy="no-referrer" />`;
+  const safeAvatar = safeImageUrl(avatarUrl);
+  if (safeAvatar) {
+    return `<img class="${sizeClass}" src="${escapeHtml(safeAvatar)}" alt="" referrerpolicy="no-referrer" />`;
   }
   const initial = (String(name || "?").trim()[0] || "?").toUpperCase();
   return `<span class="${sizeClass}">${escapeHtml(initial)}</span>`;
@@ -64,15 +78,16 @@ function showToast(text) {
   node.className = "toast";
   node.textContent = text;
   container.appendChild(node);
-  setTimeout(() => {
-    node.remove();
-  }, 3600);
+  setTimeout(() => node.remove(), 3600);
 }
 
 const deviceType = detectDeviceType();
 const clientId = getOrCreateClientId();
+let mySpeakerId = clientId;
 const savedRole = localStorage.getItem("soundmesh_role") || "stereo";
 const savedOffsetMs = Number(localStorage.getItem("soundmesh_offset_ms") || "0") || 0;
+let currentUiMode = localStorage.getItem("soundmesh_ui_mode") || "minimal";
+let currentMinimalTheme = localStorage.getItem("soundmesh_minimal_theme") || "dark";
 
 // ------------------------------------------------------------------
 // DOM Elements
@@ -87,6 +102,10 @@ const headerRoomCode = el("headerRoomCode");
 const headerSyncDot = el("headerSyncDot");
 const headerSpeakerCount = el("headerSpeakerCount");
 const headerRttText = el("headerRttText");
+
+const uiModeSwitcher = el("uiModeSwitcher");
+const themeToggleBtn = el("themeToggleBtn");
+const installPwaBtn = el("installPwaBtn");
 
 const roomTopControls = el("roomTopControls");
 const openQrBtn = el("openQrBtn");
@@ -134,9 +153,17 @@ const refreshRoomsBtn = el("refreshRoomsBtn");
 const roomsDirectoryGrid = el("roomsDirectoryGrid");
 
 const roomView = el("roomView");
+const reactionFloatLayer = el("reactionFloatLayer");
 const connectionBanner = el("connectionBanner");
 const calibrationBanner = el("calibrationBanner");
 const stopCalibrationBtn = el("stopCalibrationBtn");
+
+const minimalMusicDrawerBtn = el("minimalMusicDrawerBtn");
+const minimalAudioDrawerBtn = el("minimalAudioDrawerBtn");
+const minimalLeaderSummary = el("minimalLeaderSummary");
+const panelSearch = el("panelSearch");
+const panelSpeakers = el("panelSpeakers");
+const localAudioFileInput = el("localAudioFileInput");
 
 const unlockOverlay = el("unlockOverlay");
 const unlockRoomBadge = el("unlockRoomBadge");
@@ -167,6 +194,9 @@ const loadingPhaseText = el("loadingPhaseText");
 const nowTitle = el("nowTitle");
 const nowArtist = el("nowArtist");
 const nowError = el("nowError");
+const lyricsPanel = el("lyricsPanel");
+const closeLyricsBtn = el("closeLyricsBtn");
+const lyricsBody = el("lyricsBody");
 const visualizerCanvas = el("visualizerCanvas");
 const timeCurrent = el("timeCurrent");
 const timeDuration = el("timeDuration");
@@ -177,8 +207,10 @@ const prevBtn = el("prevBtn");
 const playPauseBtn = el("playPauseBtn");
 const nextBtn = el("nextBtn");
 const repeatBtn = el("repeatBtn");
+const toggleLyricsBtn = el("toggleLyricsBtn");
 const resyncAllBtn = el("resyncAllBtn");
 const loadRadioBtn = el("loadRadioBtn");
+const reactionBar = el("reactionBar");
 const queueCountBadge = el("queueCountBadge");
 const clearQueueBtn = el("clearQueueBtn");
 const queueList = el("queueList");
@@ -194,11 +226,28 @@ const muteMeControllerToggle = el("muteMeControllerToggle");
 const collabQueueToggle = el("collabQueueToggle");
 const leaderRequestsDrawer = el("leaderRequestsDrawer");
 
+const speakerSubTabs = el("speakerSubTabs");
+const spTabList = el("spTabList");
+const spTabMap = el("spTabMap");
+const spTabEq = el("spTabEq");
+const spTabSync = el("spTabSync");
+const speakerList = el("speakerList");
+
+const spatialEnableToggle = el("spatialEnableToggle");
+const resetSpatialPosBtn = el("resetSpatialPosBtn");
+const spatialRoomCanvas = el("spatialRoomCanvas");
+const spatialNodesLayer = el("spatialNodesLayer");
+
+const eqPresetButtons = el("eqPresetButtons");
+const eqBandsContainer = el("eqBandsContainer");
+
 const localSyncBadge = el("localSyncBadge");
 const localRttStat = el("localRttStat");
 const localDriftStat = el("localDriftStat");
 const localOffsetStat = el("localOffsetStat");
-const speakerList = el("speakerList");
+const micAutoCalBtn = el("micAutoCalBtn");
+const emitChirpBtn = el("emitChirpBtn");
+const acousticResultText = el("acousticResultText");
 
 const qrModal = el("qrModal");
 const closeQrBtn = el("closeQrBtn");
@@ -208,6 +257,7 @@ const qrIpPickerWrap = el("qrIpPickerWrap");
 const qrIpSelect = el("qrIpSelect");
 const qrUrlInput = el("qrUrlInput");
 const copyUrlBtn = el("copyUrlBtn");
+const nativeShareBtn = el("nativeShareBtn");
 const denoWarning = el("denoWarning");
 
 const passcodeModal = el("passcodeModal");
@@ -233,13 +283,13 @@ let currentUser = null;
 let authConfig = {
   google_enabled: false,
   youtube_scope_enabled: true,
-  callback_url: `${location.origin}/api/auth/google/callback`,
+  callback_url: apiUrl("/api/auth/google/callback"),
   base_url: location.origin,
   is_private_ip: false,
 };
 
 let activeRoomCode = null;
-let activeRoomPasscode = "";
+let activeRoomJoinTicket = "";
 let roomState = null;
 let myIsLeader = false;
 let myIsOwner = false;
@@ -255,6 +305,81 @@ let currentCollectionTracks = [];
 let isViewingCollection = false;
 let isSeeking = false;
 let lastRenderedSpeakerSignature = "";
+let deferredInstallPrompt = null;
+let lastLyricsVideoId = "";
+
+// ------------------------------------------------------------------
+// UI Mode & Theme Management
+// ------------------------------------------------------------------
+
+function applyUiMode(mode) {
+  if (!["minimal", "studio", "party"].includes(mode)) mode = "minimal";
+  currentUiMode = mode;
+  localStorage.setItem("soundmesh_ui_mode", mode);
+
+  document.body.classList.remove("ui-minimal", "ui-studio", "ui-party");
+  document.body.classList.add(`ui-${mode}`);
+  document.body.classList.toggle("theme-light", mode === "minimal" && currentMinimalTheme === "light");
+
+  uiModeSwitcher.querySelectorAll(".mode-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.uiMode === mode);
+  });
+  themeToggleBtn.classList.toggle("hidden", mode !== "minimal");
+  themeToggleBtn.textContent = currentMinimalTheme === "light" ? "🌙" : "☀";
+
+  // Close floating drawers when switching
+  panelSearch.classList.remove("drawer-open");
+  panelSpeakers.classList.remove("drawer-open");
+}
+
+uiModeSwitcher.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-ui-mode]");
+  if (!btn) return;
+  applyUiMode(btn.dataset.uiMode);
+});
+
+themeToggleBtn.addEventListener("click", () => {
+  currentMinimalTheme = currentMinimalTheme === "light" ? "dark" : "light";
+  localStorage.setItem("soundmesh_minimal_theme", currentMinimalTheme);
+  applyUiMode(currentUiMode);
+});
+
+minimalMusicDrawerBtn.addEventListener("click", () => {
+  panelSpeakers.classList.remove("drawer-open");
+  panelSearch.classList.toggle("drawer-open");
+});
+
+minimalAudioDrawerBtn.addEventListener("click", () => {
+  panelSearch.classList.remove("drawer-open");
+  panelSpeakers.classList.toggle("drawer-open");
+});
+
+document.querySelectorAll("[data-close-drawer]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.closeDrawer;
+    if (target === "search") panelSearch.classList.remove("drawer-open");
+    if (target === "speaker") panelSpeakers.classList.remove("drawer-open");
+  });
+});
+
+// PWA Registration & Install Prompt
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+globalThis.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installPwaBtn.classList.remove("hidden");
+});
+
+installPwaBtn.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installPwaBtn.classList.add("hidden");
+});
 
 // ------------------------------------------------------------------
 // Sync & Audio Engine
@@ -267,7 +392,7 @@ const clockSync = new ClockSync(
     if (wsClient) wsClient.send(ping);
   },
   (info) => {
-    headerRttText.textContent = `${Math.round(info.rttMs)} ms RTT`;
+    headerRttText.textContent = `${Math.round(info.rttMs)} ms`;
     localRttStat.textContent = `${Math.round(info.rttMs)} ms`;
   }
 );
@@ -281,13 +406,20 @@ const audioEngine = new SyncAudioEngine(clockSync, {
     wsClient?.send({ type: "telemetry", ...tel });
   },
   onIdentifyVisual: () => {
-    const selfCard = document.querySelector(`.speaker-card[data-speaker-id="${clientId}"]`);
+    const selfCard = document.querySelector(`.speaker-card[data-speaker-id="${CSS.escape(mySpeakerId)}"]`);
     if (selfCard) {
       selfCard.classList.remove("ping-flash");
       void selfCard.offsetWidth;
       selfCard.classList.add("ping-flash");
       setTimeout(() => selfCard.classList.remove("ping-flash"), 1600);
     }
+  },
+  onMediaAction: (action) => {
+    if (!canControlRoom() || !wsClient) return;
+    if (action === "play") wsClient.send({ type: "resume" });
+    else if (action === "pause") wsClient.send({ type: "pause" });
+    else if (action === "next") wsClient.send({ type: "next" });
+    else if (action === "prev") wsClient.send({ type: "prev" });
   },
 });
 
@@ -302,30 +434,31 @@ wsClient = new WSClient({
     if (connected && audioEngine.unlocked) {
       wsClient.send({
         type: "update_speaker",
-        target_id: clientId,
+        target_id: mySpeakerId,
         fields: { audio_unlocked: true },
       });
     }
   },
   onFatalClose: (code) => {
-    if (code === 4403) {
-      openPasscodeModal(activeRoomCode || "");
+    if (code === 4403) openPasscodeModal(activeRoomCode || "");
+    else if (code === 4429) {
+      showToast("Too many passcode attempts. Please wait a minute.");
+      navigateToLobby();
     } else if (code === 4404) {
-      showToast("Room not found or has closed.");
+      showToast("Room not found or closed.");
       navigateToLobby();
     }
   },
-  onMessage: (msg) => {
-    handleServerMessage(msg);
-  },
+  onMessage: (msg) => handleServerMessage(msg),
 });
 
 // ------------------------------------------------------------------
-// Auth & Account UI
+// Auth & Presets
 // ------------------------------------------------------------------
 
 async function refreshAuth() {
-  const resp = await fetch("/api/auth/me");
+  await exchangePendingOauthTicket();
+  const resp = await apiFetch("/api/auth/me");
   const data = await resp.json();
   currentUser = data.user || null;
   authConfig = data.auth_config || authConfig;
@@ -339,9 +472,9 @@ function startGoogleLogin(includeYt = true) {
     return;
   }
   const nextPath = activeRoomCode ? `/room/${activeRoomCode}` : "/";
-  const url = `/api/auth/google/login?next=${encodeURIComponent(nextPath)}&include_youtube=${
-    includeYt ? "1" : "0"
-  }`;
+  const url = apiUrl(
+    `/api/auth/google/login?next=${encodeURIComponent(nextPath)}&include_youtube=${includeYt ? "1" : "0"}`
+  );
   location.href = url;
 }
 
@@ -352,9 +485,7 @@ function renderAccountUI() {
     accountModeBadge.textContent = "Not Signed In";
     lobbySignedOut.classList.remove("hidden");
     lobbySignedIn.classList.add("hidden");
-    navAccountArea.innerHTML = `
-      <button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Sign in with Google</button>
-    `;
+    navAccountArea.innerHTML = `<button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Google Sign-In</button>`;
     el("navGoogleSignInBtn")?.addEventListener("click", () => startGoogleLogin(true));
     return;
   }
@@ -379,31 +510,36 @@ function renderAccountUI() {
       ${avatarHtml(currentUser.name, currentUser.avatar_url, "avatar-sm")}
       <span>${escapeHtml(currentUser.name)}</span>
     </div>
-    ${
-      !isGoogle
-        ? `<button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Google Sign-In</button>`
-        : ""
-    }
-    <button id="navLogoutBtn" class="btn btn-ghost btn-xs">Sign Out</button>
+    ${!isGoogle ? `<button id="navGoogleSignInBtn" class="btn btn-outline btn-xs">Google</button>` : ""}
+    <button id="navLogoutBtn" class="btn btn-ghost btn-xs">Out</button>
   `;
   el("navGoogleSignInBtn")?.addEventListener("click", () => startGoogleLogin(true));
   el("navLogoutBtn")?.addEventListener("click", logoutUser);
 }
 
 async function logoutUser() {
-  await fetch("/api/auth/logout", { method: "POST" });
+  await apiFetch("/api/auth/logout", { method: "POST" });
+  setSessionToken("");
   currentUser = null;
   renderAccountUI();
-  if (activeRoomCode) {
-    navigateToLobby();
-  } else {
-    refreshRoomsDirectory();
+  if (activeRoomCode) navigateToLobby();
+  else refreshRoomsDirectory();
+}
+
+async function saveCloudPreset(fields) {
+  if (!currentUser) return;
+  try {
+    await apiFetch(`/api/me/preset/${encodeURIComponent(clientId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+  } catch {
+    // Non-critical preset persistence
   }
 }
 
-lobbyGoogleLoginBtn.addEventListener("click", () => {
-  startGoogleLogin(includeYoutubeScopeCheck.checked);
-});
+lobbyGoogleLoginBtn.addEventListener("click", () => startGoogleLogin(includeYoutubeScopeCheck.checked));
 upgradeGoogleBtn.addEventListener("click", () => startGoogleLogin(true));
 connectYtScopeBtn.addEventListener("click", () => startGoogleLogin(true));
 lobbyLogoutBtn.addEventListener("click", logoutUser);
@@ -412,13 +548,14 @@ guestLoginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name = guestNameInput.value.trim();
   if (!name) return;
-  const resp = await fetch("/api/auth/guest", {
+  const resp = await apiFetch("/api/auth/guest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
   const data = await resp.json();
   currentUser = data.user;
+  if (data.session_token) setSessionToken(data.session_token);
   localStorage.setItem("soundmesh_speaker_name", `${currentUser.name}'s ${defaultDeviceLabel(deviceType)}`);
   renderAccountUI();
   refreshRoomsDirectory();
@@ -432,31 +569,31 @@ guestLoginForm.addEventListener("submit", async (e) => {
 async function ensureSignedInForLobbyAction() {
   if (currentUser) return true;
   const typedName = guestNameInput.value.trim() || "Music Host";
-  const resp = await fetch("/api/auth/guest", {
+  const resp = await apiFetch("/api/auth/guest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: typedName }),
   });
   const data = await resp.json();
   currentUser = data.user;
+  if (data.session_token) setSessionToken(data.session_token);
   renderAccountUI();
   return true;
 }
 
 async function refreshRoomsDirectory() {
   try {
-    const resp = await fetch("/api/rooms");
+    const resp = await apiFetch("/api/rooms");
     if (!resp.ok) return;
     lobbyRoomsData = await resp.json();
     renderRoomsDirectory();
   } catch {
-    // Ignore transient fetch error
+    // Ignore
   }
 }
 
 function renderRoomsDirectory() {
-  const list =
-    lobbyTab === "mine" ? lobbyRoomsData.my_rooms || [] : lobbyRoomsData.public_rooms || [];
+  const list = lobbyTab === "mine" ? lobbyRoomsData.my_rooms || [] : lobbyRoomsData.public_rooms || [];
   if (list.length === 0) {
     roomsDirectoryGrid.innerHTML = `<div class="empty-state compact"><p>${
       lobbyTab === "mine"
@@ -512,15 +649,13 @@ refreshRoomsBtn.addEventListener("click", refreshRoomsDirectory);
 roomsDirectoryGrid.addEventListener("click", async (e) => {
   const joinBtn = e.target.closest("[data-join-code]");
   if (joinBtn) {
-    const code = joinBtn.dataset.joinCode;
-    const hasPass = joinBtn.dataset.hasPass === "1";
-    await attemptEnterRoom(code, "", hasPass);
+    await attemptEnterRoom(joinBtn.dataset.joinCode, "", joinBtn.dataset.hasPass === "1");
     return;
   }
   const delBtn = e.target.closest("[data-delete-code]");
   if (delBtn) {
     const code = delBtn.dataset.deleteCode;
-    const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}`, { method: "DELETE" });
+    const resp = await apiFetch(`/api/rooms/${encodeURIComponent(code)}`, { method: "DELETE" });
     if (resp.ok) {
       showToast(`Deleted room #${code}`);
       refreshRoomsDirectory();
@@ -536,7 +671,7 @@ createRoomForm.addEventListener("submit", async (e) => {
     is_public: createRoomVisibility.value === "public",
     passcode: createRoomPasscode.value.trim(),
   };
-  const resp = await fetch("/api/rooms", {
+  const resp = await apiFetch("/api/rooms", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -546,45 +681,49 @@ createRoomForm.addEventListener("submit", async (e) => {
     return;
   }
   const data = await resp.json();
-  await enterRoom(data.room.code, payload.passcode, true);
+  enterRoom(data.room.code, "", true);
 });
 
 joinCodeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const code = joinCodeInput.value.trim().toUpperCase();
-  const pass = joinPasscodeInput.value.trim();
   if (!code) return;
-  await attemptEnterRoom(code, pass, false);
+  await attemptEnterRoom(code, joinPasscodeInput.value.trim(), false);
 });
 
-async function attemptEnterRoom(code, passcode = "", forcePromptIfProtected = false) {
+async function attemptEnterRoom(code, passcode = "", forcePrompt = false) {
   const cleanCode = code.trim().toUpperCase();
-  const resp = await fetch(`/api/rooms/${encodeURIComponent(cleanCode)}`);
+  const resp = await apiFetch(`/api/rooms/${encodeURIComponent(cleanCode)}`);
   if (!resp.ok) {
     showToast(`Room #${cleanCode} not found.`);
     return;
   }
-  const data = await resp.json();
-  const roomSummary = data.room;
+  const roomSummary = (await resp.json()).room;
   const isOwner = currentUser && roomSummary.owner_user_id === currentUser.id;
+  let joinTicket = "";
   if (roomSummary.has_passcode && !isOwner) {
     if (passcode) {
-      const vResp = await fetch(`/api/rooms/${encodeURIComponent(cleanCode)}/verify`, {
+      const vResp = await apiFetch(`/api/rooms/${encodeURIComponent(cleanCode)}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ passcode }),
       });
+      if (vResp.status === 429) {
+        showToast("Too many passcode attempts. Please wait a minute.");
+        return;
+      }
       const vData = await vResp.json();
       if (!vData.ok) {
         openPasscodeModal(cleanCode);
         return;
       }
-    } else if (forcePromptIfProtected || !passcode) {
+      joinTicket = vData.join_ticket || "";
+    } else if (forcePrompt || !passcode) {
       openPasscodeModal(cleanCode);
       return;
     }
   }
-  await enterRoom(cleanCode, passcode, true);
+  enterRoom(cleanCode, joinTicket, true);
 }
 
 function openPasscodeModal(code) {
@@ -602,24 +741,31 @@ passcodeModalForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const code = passcodeModal.dataset.targetCode;
   const pass = passcodeModalInput.value.trim();
-  const vResp = await fetch(`/api/rooms/${encodeURIComponent(code)}/verify`, {
+  const vResp = await apiFetch(`/api/rooms/${encodeURIComponent(code)}/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ passcode: pass }),
   });
+  if (vResp.status === 429) {
+    passcodeModalError.textContent = "Too many attempts. Wait 60s and retry.";
+    passcodeModalError.classList.remove("hidden");
+    return;
+  }
   const vData = await vResp.json();
   if (!vData.ok) {
+    passcodeModalError.textContent = "Incorrect room passcode.";
     passcodeModalError.classList.remove("hidden");
     return;
   }
   passcodeModal.classList.add("hidden");
-  await enterRoom(code, pass, true);
+  enterRoom(code, vData.join_ticket || "", true);
 });
 
-function enterRoom(roomCode, passcode = "", pushHistory = true) {
+function enterRoom(roomCode, joinTicket = "", pushHistory = true) {
   const cleanCode = roomCode.trim().toUpperCase();
   activeRoomCode = cleanCode;
-  activeRoomPasscode = passcode;
+  activeRoomJoinTicket = joinTicket;
+  mySpeakerId = clientId;
   roomState = null;
   lastRenderedSpeakerSignature = "";
 
@@ -631,7 +777,9 @@ function enterRoom(roomCode, passcode = "", pushHistory = true) {
   roomView.classList.remove("hidden");
   roomHeaderCluster.classList.remove("hidden");
   roomTopControls.classList.remove("hidden");
+  uiModeSwitcher.classList.remove("hidden");
   document.body.classList.add("in-room");
+  applyUiMode(currentUiMode);
 
   const suggestedName =
     localStorage.getItem("soundmesh_speaker_name") ||
@@ -639,26 +787,25 @@ function enterRoom(roomCode, passcode = "", pushHistory = true) {
   unlockNameInput.value = suggestedName;
   unlockRoleSelect.value = savedRole;
   unlockRoomBadge.textContent = `ROOM #${cleanCode}`;
-  if (!audioEngine.unlocked) {
-    unlockOverlay.classList.remove("hidden");
-  }
+  if (!audioEngine.unlocked) unlockOverlay.classList.remove("hidden");
 
-  wsClient.connect(cleanCode, {
+  const wsParams = {
     client_id: clientId,
     name: suggestedName,
     device_type: deviceType,
     role: savedRole,
     offset_ms: String(savedOffsetMs),
-    passcode: activeRoomPasscode,
-  });
+  };
+  if (activeRoomJoinTicket) wsParams.join_ticket = activeRoomJoinTicket;
+  wsClient.connect(cleanCode, wsParams);
 
-  setMobileTab(deviceType !== "desktop" ? "speaker" : "stage");
+  setMobileTab("stage");
 }
 
 function navigateToLobby(pushHistory = true) {
   wsClient.close();
   activeRoomCode = null;
-  activeRoomPasscode = "";
+  activeRoomJoinTicket = "";
   roomState = null;
   connectionBanner.classList.add("hidden");
   document.body.classList.remove("in-room");
@@ -666,6 +813,8 @@ function navigateToLobby(pushHistory = true) {
   roomView.classList.add("hidden");
   roomHeaderCluster.classList.add("hidden");
   roomTopControls.classList.add("hidden");
+  uiModeSwitcher.classList.add("hidden");
+  themeToggleBtn.classList.add("hidden");
   lobbyView.classList.remove("hidden");
 
   if (pushHistory && location.pathname !== "/") {
@@ -678,12 +827,10 @@ brandHomeBtn.addEventListener("click", () => {
   if (activeRoomCode) navigateToLobby();
 });
 leaveRoomBtn.addEventListener("click", () => navigateToLobby());
-globalThis.addEventListener("popstate", () => {
-  handleInitialRoute(false);
-});
+globalThis.addEventListener("popstate", () => handleInitialRoute(false));
 
 // ------------------------------------------------------------------
-// Audio Unlock Overlay
+// Audio Unlock
 // ------------------------------------------------------------------
 
 function completeUnlock(controllerOnly = false) {
@@ -694,21 +841,13 @@ function completeUnlock(controllerOnly = false) {
 
   audioEngine.unlock();
   audioEngine.setRole(chosenRole);
-  if (controllerOnly) {
-    audioEngine.setVolumes({ speakerMuted: true });
-  }
-
+  if (controllerOnly) audioEngine.setVolumes({ speakerMuted: true });
   unlockOverlay.classList.add("hidden");
 
   wsClient.send({
     type: "update_speaker",
-    target_id: clientId,
-    fields: {
-      name: chosenName,
-      role: chosenRole,
-      muted: controllerOnly,
-      audio_unlocked: true,
-    },
+    target_id: mySpeakerId,
+    fields: { name: chosenName, role: chosenRole, muted: controllerOnly, audio_unlocked: true },
   });
 }
 
@@ -723,12 +862,23 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ------------------------------------------------------------------
-// WebSocket Room Messages
+// WebSocket Messages & Floating Reactions
 // ------------------------------------------------------------------
+
+function spawnFloatingReaction(emoji, userName) {
+  const bubble = document.createElement("div");
+  bubble.className = "floating-emoji";
+  bubble.style.left = `${12 + Math.random() * 76}%`;
+  bubble.title = userName || "";
+  bubble.textContent = emoji;
+  reactionFloatLayer.appendChild(bubble);
+  setTimeout(() => bubble.remove(), 2350);
+}
 
 function handleServerMessage(msg) {
   switch (msg.type) {
     case "welcome":
+      if (msg.speaker_id) mySpeakerId = msg.speaker_id;
       myIsLeader = Boolean(msg.is_leader);
       myIsOwner = Boolean(msg.is_owner);
       applyFullRoomState(msg.state);
@@ -741,6 +891,7 @@ function handleServerMessage(msg) {
         roomState.playback = msg.playback;
         audioEngine.applyPlaybackState(msg.playback, Boolean(msg.force_resync));
         renderPlaybackUI();
+        scheduleGaplessPrefetch();
       }
       break;
     case "speakers_update":
@@ -748,23 +899,34 @@ function handleServerMessage(msg) {
         roomState.speakers = msg.speakers || [];
         syncSelfFromRoom();
         renderSpeakersUI();
+        renderSpatialMap();
         renderLeaderBanner();
       }
       break;
     case "identify_speaker":
       audioEngine.playIdentifyChime();
       break;
-    case "leader_changed":
-      if (msg.reason === "auto_handoff") {
-        showToast(`👑 ${msg.leader_name} automatically became Room Leader`);
-      } else {
-        showToast(`👑 ${msg.leader_name} is now the Room Leader`);
+    case "acoustic_chirp":
+      if (msg.emitter_id === mySpeakerId && msg.start_server_ms) {
+        audioEngine.emitTimedChirp(msg.start_server_ms);
+        showToast("📡 Emitting calibration chirp…");
       }
       break;
+    case "reaction":
+      spawnFloatingReaction(msg.emoji || "🔥", msg.user_name);
+      break;
+    case "track_skipped":
+      showToast(`Skipped "${msg.title}": unavailable on server`);
+      break;
+    case "leader_changed":
+      showToast(
+        msg.reason === "auto_handoff"
+          ? `👑 ${msg.leader_name} automatically became Room Leader`
+          : `👑 ${msg.leader_name} is now the Room Leader`
+      );
+      break;
     case "leader_request":
-      if (msg.request) {
-        showToast(`✋ ${msg.request.user_name} requested to become Room Leader`);
-      }
+      if (msg.request) showToast(`✋ ${msg.request.user_name} requested to become Room Leader`);
       break;
     case "leader_request_declined":
       showToast(`Leader request was declined by ${msg.by || "Leader"}`);
@@ -775,6 +937,18 @@ function handleServerMessage(msg) {
       break;
     default:
       break;
+  }
+}
+
+function scheduleGaplessPrefetch() {
+  if (!roomState || !audioEngine.unlocked) return;
+  const q = roomState.queue || [];
+  const curIdx = roomState.playback?.queue_index ?? -1;
+  if (roomState.playback?.status === "playing" && curIdx >= 0 && curIdx + 1 < q.length) {
+    const nextTrack = q[curIdx + 1];
+    if (nextTrack?.cached && nextTrack.duration_sec <= 720) {
+      audioEngine.prefetchNext(nextTrack.video_id);
+    }
   }
 }
 
@@ -789,6 +963,7 @@ function applyFullRoomState(state) {
   });
   audioEngine.setCalibrationState(state.calibration);
   audioEngine.applyPlaybackState(state.playback, false);
+  scheduleGaplessPrefetch();
 
   renderTopBar();
   renderLeaderBanner();
@@ -796,26 +971,32 @@ function applyFullRoomState(state) {
   renderPlaybackUI();
   renderQueueUI();
   renderSpeakersUI();
+  renderSpatialMap();
   renderPermissionsUI();
 }
 
 function syncSelfFromRoom() {
   if (!roomState || !Array.isArray(roomState.speakers)) return;
-  const me = roomState.speakers.find((s) => s.id === clientId);
+  const me = roomState.speakers.find((s) => s.id === mySpeakerId);
   if (!me) return;
   myIsLeader = Boolean(me.is_leader);
   myIsOwner = Boolean(me.is_owner);
   audioEngine.setRole(me.role);
-  audioEngine.setVolumes({
-    speakerVolume: me.volume,
-    speakerMuted: me.muted,
+  audioEngine.setSpatial({
+    pos_x: me.pos_x,
+    pos_y: me.pos_y,
+    spatial_enabled: me.spatial_enabled,
   });
+  audioEngine.setEq({ eq_preset: me.eq_preset, eq_bands: me.eq_bands });
+  audioEngine.setVolumes({ speakerVolume: me.volume, speakerMuted: me.muted });
   if (Math.abs(audioEngine.offsetMs - me.offset_ms) > 0.05) {
     audioEngine.setOffsetMs(me.offset_ms);
     localStorage.setItem("soundmesh_offset_ms", String(me.offset_ms));
   }
   localOffsetStat.textContent = `${Math.round(me.offset_ms)} ms`;
   muteMeControllerToggle.checked = Boolean(me.muted);
+  spatialEnableToggle.checked = Boolean(me.spatial_enabled);
+  syncEqSlidersUI(me.eq_preset, me.eq_bands);
 }
 
 function canControlRoom() {
@@ -859,22 +1040,18 @@ function renderTopBar() {
 function renderLeaderBanner() {
   if (!roomState) return;
   const leader = (roomState.speakers || []).find((s) => s.id === roomState.leader_speaker_id);
-  if (leader) {
-    leaderBannerName.textContent = leader.user_name || leader.name;
-    leaderBannerDevice.textContent = `(${leader.name})`;
-  } else {
-    leaderBannerName.textContent = "Waiting for Leader…";
-    leaderBannerDevice.textContent = "";
-  }
+  const leaderLabel = leader ? leader.user_name || leader.name : "Waiting for Leader…";
+  leaderBannerName.textContent = leaderLabel;
+  leaderBannerDevice.textContent = leader ? `(${leader.name})` : "";
+  minimalLeaderSummary.textContent = `👑 Leader: ${leaderLabel} • ${(roomState.speakers || []).length} Speakers`;
 
   const alreadyRequested = (roomState.pending_leader_requests || []).some(
-    (r) => r.speaker_id === clientId
+    (r) => r.speaker_id === mySpeakerId
   );
 
   requestLeaderBtn.classList.toggle("hidden", myIsLeader || myIsOwner);
   requestLeaderBtn.disabled = alreadyRequested;
   requestLeaderBtn.textContent = alreadyRequested ? "⏳ Requested…" : "✋ Request Leader";
-
   takeLeaderBtn.classList.toggle("hidden", !(myIsOwner && !myIsLeader));
 
   leaderOwnerControls.classList.toggle("hidden", !canAssignLeader());
@@ -908,27 +1085,16 @@ function renderLeaderRequests() {
 function renderPermissionsUI() {
   const allowed = canControlRoom();
   const canSearchOrQueue = canQueueTracks();
-  const controls = [
-    playPauseBtn,
-    prevBtn,
-    nextBtn,
-    shuffleBtn,
-    repeatBtn,
-    seekSlider,
-    clearQueueBtn,
-    autoStereoBtn,
-    calibrateToggleBtn,
-    masterVolumeSlider,
-    masterMuteBtn,
-    resyncAllBtn,
-    loadRadioBtn,
-  ];
-  for (const c of controls) {
+  [
+    playPauseBtn, prevBtn, nextBtn, shuffleBtn, repeatBtn, seekSlider,
+    clearQueueBtn, autoStereoBtn, calibrateToggleBtn, masterVolumeSlider,
+    masterMuteBtn, resyncAllBtn, loadRadioBtn,
+  ].forEach((c) => {
     if (c) c.disabled = !allowed;
-  }
+  });
   if (searchSubmitBtn) searchSubmitBtn.disabled = !canSearchOrQueue;
   if (mobileSearchNav) mobileSearchNav.style.display = canSearchOrQueue ? "flex" : "none";
-  if (mobileQueueNav) mobileQueueNav.style.display = allowed ? "flex" : "none";
+  if (mobileQueueNav) mobileQueueNav.style.display = "flex";
 }
 
 function renderPlaybackUI() {
@@ -939,20 +1105,24 @@ function renderPlaybackUI() {
   if (track) {
     nowTitle.textContent = track.title;
     nowArtist.textContent = track.album ? `${track.artist} • ${track.album}` : track.artist;
-    if (track.thumbnail) {
-      nowArtwork.src = track.thumbnail;
+    const safeThumb = safeImageUrl(track.thumbnail);
+    if (safeThumb) {
+      nowArtwork.src = safeThumb;
       nowArtwork.classList.remove("hidden");
       nowArtworkPlaceholder.classList.add("hidden");
-      stageBackdrop.style.backgroundImage = `url("${track.thumbnail}")`;
+      stageBackdrop.style.backgroundImage = `url("${safeThumb}")`;
     } else {
       nowArtwork.classList.add("hidden");
       nowArtworkPlaceholder.classList.remove("hidden");
       stageBackdrop.style.backgroundImage = "none";
     }
+    if (!lyricsPanel.classList.contains("hidden") && lastLyricsVideoId !== track.video_id) {
+      fetchAndRenderLyrics(track.video_id);
+    }
   } else {
     nowTitle.textContent = "No Track Playing";
     nowArtist.textContent = myIsLeader
-      ? "Search YouTube Music or open ★ My Library to start playing"
+      ? "Search YouTube Music, open ★ My Library, or upload an MP3"
       : "Synced to Room Leader — waiting for next track";
     nowArtwork.classList.add("hidden");
     nowArtworkPlaceholder.classList.remove("hidden");
@@ -988,48 +1158,53 @@ function renderQueueUI() {
   queueCountBadge.textContent = String(q.length);
 
   if (q.length === 0) {
-    queueList.innerHTML = `<div class="empty-state compact"><p>Queue is empty. Add songs to build a synchronized playlist.</p></div>`;
+    queueList.innerHTML = `<div class="empty-state compact"><p>Queue is empty. Add or upvote songs to play in sync.</p></div>`;
     return;
   }
 
   const allowed = canControlRoom();
+  const myKey = currentUser?.id || mySpeakerId;
+
   queueList.innerHTML = q
-    .map(
-      (t, idx) => `
+    .map((t, idx) => {
+      const votes = Array.isArray(t.votes) ? t.votes : [];
+      const voted = votes.includes(myKey);
+      const isUpcoming = idx > curIdx;
+      return `
       <div class="track-row ${idx === curIdx ? "active-track" : ""}" data-q-idx="${idx}">
-        <img class="track-thumb" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />
+        <img class="track-thumb" src="${escapeHtml(safeImageUrl(t.thumbnail))}" alt="" loading="lazy" />
         <div class="track-info" data-action="play-idx" data-idx="${idx}" style="cursor:pointer">
           <div class="track-title">${idx === curIdx ? "▶ " : ""}${escapeHtml(t.title)}</div>
           <div class="track-sub">${escapeHtml(t.artist)} • ${formatTime(t.duration_sec)} ${
             t.cached ? '<span class="cached-tag">Cached</span>' : ""
           }</div>
         </div>
-        ${
-          allowed
-            ? `<div class="track-actions">
-                <button class="icon-btn" data-action="up" data-idx="${idx}" title="Move up">↑</button>
-                <button class="icon-btn" data-action="down" data-idx="${idx}" title="Move down">↓</button>
-                <button class="icon-btn" data-action="remove" data-idx="${idx}" title="Remove">✕</button>
-              </div>`
-            : ""
-        }
-      </div>`
-    )
+        <div class="track-actions">
+          ${
+            isUpcoming
+              ? `<button class="upvote-btn ${voted ? "voted" : ""}" data-action="upvote" data-idx="${idx}" title="Upvote to play sooner">▲ ${votes.length}</button>`
+              : ""
+          }
+          ${
+            allowed
+              ? `<button class="icon-btn" data-action="up" data-idx="${idx}" title="Move up">↑</button>
+                 <button class="icon-btn" data-action="down" data-idx="${idx}" title="Move down">↓</button>
+                 <button class="icon-btn" data-action="remove" data-idx="${idx}" title="Remove">✕</button>`
+              : ""
+          }
+        </div>
+      </div>`;
+    })
     .join("");
 }
 
 function formatSyncStatus(status) {
   switch (status) {
-    case "locked":
-      return "Synced";
-    case "syncing":
-      return "Aligning…";
-    case "buffering":
-      return "Buffering…";
-    case "idle":
-      return "Ready";
-    default:
-      return "Tap to Unlock";
+    case "locked": return "Synced";
+    case "syncing": return "Aligning…";
+    case "buffering": return "Buffering…";
+    case "idle": return "Ready";
+    default: return "Tap to Unlock";
   }
 }
 
@@ -1044,7 +1219,6 @@ function updateLocalTelemetryUI(tel) {
 function renderSpeakersUI() {
   if (!roomState) return;
   const speakers = roomState.speakers || [];
-
   const sig =
     speakers.map((s) => `${s.id}:${s.is_leader}:${s.is_owner}`).join("|") +
     `:${canControlRoom()}:${canAssignLeader()}`;
@@ -1059,7 +1233,7 @@ function renderSpeakersUI() {
     speakerList.innerHTML = speakers.map((s) => buildSpeakerCardHtml(s)).join("");
   } else {
     for (const s of speakers) {
-      const card = speakerList.querySelector(`.speaker-card[data-speaker-id="${s.id}"]`);
+      const card = speakerList.querySelector(`.speaker-card[data-speaker-id="${CSS.escape(s.id)}"]`);
       if (!card) {
         lastRenderedSpeakerSignature = "";
         speakerList.innerHTML = speakers.map((sp) => buildSpeakerCardHtml(sp)).join("");
@@ -1074,30 +1248,17 @@ function renderSpeakersUI() {
       if (tel) {
         tel.textContent = `RTT ${Math.round(s.rtt_ms)}ms • Drift ${s.drift_ms >= 0 ? "+" : ""}${s.drift_ms.toFixed(1)}ms`;
       }
-      const nameInput = card.querySelector("[data-field='name']");
-      if (nameInput && document.activeElement !== nameInput) nameInput.value = s.name;
-      const roleSelect = card.querySelector("[data-field='role']");
-      if (roleSelect && document.activeElement !== roleSelect) roleSelect.value = s.role;
-      const volSlider = card.querySelector("[data-field='volume']");
-      if (volSlider && document.activeElement !== volSlider) {
-        volSlider.value = String(Math.round(s.volume * 100));
-      }
-      const muteBtn = card.querySelector("[data-action='toggle-mute']");
-      if (muteBtn) muteBtn.textContent = s.muted ? "🔇" : "🔊";
-      const offSlider = card.querySelector("[data-field='offset_ms']");
-      if (offSlider && document.activeElement !== offSlider) {
-        offSlider.value = String(Math.round(s.offset_ms));
-      }
       const offLabel = card.querySelector("[data-role='offset-label']");
       if (offLabel) offLabel.textContent = `${Math.round(s.offset_ms)}ms`;
+      const muteBtn = card.querySelector("[data-action='toggle-mute']");
+      if (muteBtn) muteBtn.textContent = s.muted ? "🔇" : "🔊";
     }
   }
-
   headerSpeakerCount.textContent = `${speakers.length} Speaker${speakers.length === 1 ? "" : "s"}`;
 }
 
 function buildSpeakerCardHtml(s) {
-  const isSelf = s.id === clientId;
+  const isSelf = s.id === mySpeakerId;
   const editable = isSelf || canControlRoom();
   const disabledAttr = editable ? "" : "disabled";
   const showMakeLeader = canAssignLeader() && !s.is_leader;
@@ -1123,24 +1284,20 @@ function buildSpeakerCardHtml(s) {
       <div class="speaker-telemetry">
         <span data-role="telemetry">RTT ${Math.round(s.rtt_ms)}ms • Drift ${s.drift_ms >= 0 ? "+" : ""}${s.drift_ms.toFixed(1)}ms</span>
         <div class="speaker-actions-inline">
-          ${
-            showMakeLeader
-              ? `<button class="btn btn-accent btn-xs" data-action="make-leader" title="Hand playback control to this device">👑 Make Leader</button>`
-              : ""
-          }
-          <button class="btn btn-ghost btn-xs" data-action="ping" title="Identify this speaker">🔔 Ping</button>
+          ${showMakeLeader ? `<button class="btn btn-accent btn-xs" data-action="make-leader">👑 Make Leader</button>` : ""}
+          <button class="btn btn-ghost btn-xs" data-action="ping">🔔 Ping</button>
         </div>
       </div>
 
       <div class="speaker-controls">
-        <select data-field="role" ${disabledAttr} title="Speaker Channel">
+        <select data-field="role" ${disabledAttr}>
           <option value="stereo" ${s.role === "stereo" ? "selected" : ""}>Stereo</option>
           <option value="left" ${s.role === "left" ? "selected" : ""}>Left (L)</option>
           <option value="right" ${s.role === "right" ? "selected" : ""}>Right (R)</option>
           <option value="mono" ${s.role === "mono" ? "selected" : ""}>Mono</option>
           <option value="subwoofer" ${s.role === "subwoofer" ? "selected" : ""}>Sub</option>
         </select>
-        <button class="icon-btn" data-action="toggle-mute" ${disabledAttr} title="Mute speaker">${s.muted ? "🔇" : "🔊"}</button>
+        <button class="icon-btn" data-action="toggle-mute" ${disabledAttr}>${s.muted ? "🔇" : "🔊"}</button>
         <input type="range" min="0" max="100" value="${Math.round(s.volume * 100)}" data-field="volume" ${disabledAttr} aria-label="Speaker volume" />
       </div>
 
@@ -1156,7 +1313,156 @@ function buildSpeakerCardHtml(s) {
 }
 
 // ------------------------------------------------------------------
-// YouTube Music Search & Personal Library
+// Speaker Sub-Tabs, 2D Spatial Map, 5-Band EQ & Acoustic Auto-Sync
+// ------------------------------------------------------------------
+
+speakerSubTabs.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-sp-tab]");
+  if (!btn) return;
+  const tab = btn.dataset.spTab;
+  speakerSubTabs.querySelectorAll(".tab-chip").forEach((b) => b.classList.toggle("active", b === btn));
+  spTabList.classList.toggle("hidden", tab !== "list");
+  spTabMap.classList.toggle("hidden", tab !== "map");
+  spTabEq.classList.toggle("hidden", tab !== "eq");
+  spTabSync.classList.toggle("hidden", tab !== "sync");
+});
+
+function renderSpatialMap() {
+  if (!roomState) return;
+  const speakers = roomState.speakers || [];
+  spatialNodesLayer.innerHTML = speakers
+    .map((s) => {
+      const leftPct = Math.max(8, Math.min(92, 50 + (s.pos_x || 0) * 42));
+      const topPct = Math.max(10, Math.min(90, 50 + (s.pos_y || 0) * 40));
+      const isSelf = s.id === mySpeakerId;
+      return `<div class="spatial-node ${isSelf ? "is-self" : ""}" data-spatial-id="${escapeHtml(s.id)}" style="left:${leftPct}%;top:${topPct}%">${
+        s.is_leader ? "👑 " : ""
+      }${escapeHtml(s.name)}</div>`;
+    })
+    .join("");
+}
+
+let draggingSpatial = false;
+
+function updateSpatialFromPointer(clientX, clientY) {
+  const rect = spatialRoomCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const nx = Math.max(-1, Math.min(1, ((clientX - rect.left) / rect.width - 0.5) / 0.42));
+  const ny = Math.max(-1, Math.min(1, ((clientY - rect.top) / rect.height - 0.5) / 0.4));
+  audioEngine.setSpatial({ pos_x: nx, pos_y: ny, spatial_enabled: true });
+  spatialEnableToggle.checked = true;
+  const node = spatialNodesLayer.querySelector(`.spatial-node[data-spatial-id="${CSS.escape(mySpeakerId)}"]`);
+  if (node) {
+    node.style.left = `${50 + nx * 42}%`;
+    node.style.top = `${50 + ny * 40}%`;
+  }
+  return { nx, ny };
+}
+
+spatialRoomCanvas.addEventListener("pointerdown", (e) => {
+  const selfNode = e.target.closest(`.spatial-node[data-spatial-id="${CSS.escape(mySpeakerId)}"]`);
+  if (!selfNode) return;
+  draggingSpatial = true;
+  spatialRoomCanvas.setPointerCapture(e.pointerId);
+});
+
+spatialRoomCanvas.addEventListener("pointermove", (e) => {
+  if (!draggingSpatial) return;
+  updateSpatialFromPointer(e.clientX, e.clientY);
+});
+
+spatialRoomCanvas.addEventListener("pointerup", (e) => {
+  if (!draggingSpatial) return;
+  draggingSpatial = false;
+  const pos = updateSpatialFromPointer(e.clientX, e.clientY);
+  if (pos) {
+    wsClient.send({
+      type: "update_speaker",
+      target_id: mySpeakerId,
+      fields: { pos_x: pos.nx, pos_y: pos.ny, spatial_enabled: true },
+    });
+    saveCloudPreset({ pos_x: pos.nx, pos_y: pos.ny });
+  }
+});
+
+spatialEnableToggle.addEventListener("change", () => {
+  const enabled = spatialEnableToggle.checked;
+  audioEngine.setSpatial({ spatial_enabled: enabled });
+  wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { spatial_enabled: enabled } });
+});
+
+resetSpatialPosBtn.addEventListener("click", () => {
+  audioEngine.setSpatial({ pos_x: 0, pos_y: 0 });
+  wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { pos_x: 0, pos_y: 0 } });
+  renderSpatialMap();
+});
+
+function syncEqSlidersUI(preset, bands) {
+  eqPresetButtons.querySelectorAll("[data-eq]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.eq === preset);
+  });
+  if (Array.isArray(bands) && bands.length === 5) {
+    bands.forEach((v, idx) => {
+      const inp = eqBandsContainer.querySelector(`input[data-band="${idx}"]`);
+      const lbl = el(`eqVal${idx}`);
+      if (inp && document.activeElement !== inp) inp.value = String(v);
+      if (lbl) lbl.textContent = `${v >= 0 ? "+" : ""}${Math.round(v)}dB`;
+    });
+  }
+}
+
+eqPresetButtons.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-eq]");
+  if (!btn) return;
+  const preset = btn.dataset.eq;
+  const bands = [...(EQ_PRESETS[preset] || EQ_PRESETS.flat)];
+  audioEngine.setEq({ eq_preset: preset, eq_bands: bands });
+  syncEqSlidersUI(preset, bands);
+  wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { eq_preset: preset, eq_bands: bands } });
+  saveCloudPreset({ eq_preset: preset });
+});
+
+eqBandsContainer.addEventListener("input", (e) => {
+  const inp = e.target.closest("input[data-band]");
+  if (!inp) return;
+  const bands = [0, 1, 2, 3, 4].map((i) => Number(eqBandsContainer.querySelector(`input[data-band="${i}"]`)?.value || 0));
+  audioEngine.setEq({ eq_bands: bands });
+  syncEqSlidersUI(audioEngine.eqPreset, bands);
+});
+
+eqBandsContainer.addEventListener("change", () => {
+  const bands = [0, 1, 2, 3, 4].map((i) => Number(eqBandsContainer.querySelector(`input[data-band="${i}"]`)?.value || 0));
+  wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { eq_bands: bands } });
+});
+
+micAutoCalBtn.addEventListener("click", async () => {
+  micAutoCalBtn.disabled = true;
+  acousticResultText.textContent = "Listening to calibration clicks for 3s…";
+  try {
+    const res = await audioEngine.runMicAutoCalibrate();
+    audioEngine.setOffsetMs(res.suggestedOffsetMs);
+    localStorage.setItem("soundmesh_offset_ms", String(res.suggestedOffsetMs));
+    localOffsetStat.textContent = `${res.suggestedOffsetMs} ms`;
+    acousticResultText.textContent = `Detected lag ${res.measuredLagMs}ms (~${res.distanceMeters}m) → applied ${res.suggestedOffsetMs}ms offset`;
+    wsClient.send({
+      type: "update_speaker",
+      target_id: mySpeakerId,
+      fields: { offset_ms: res.suggestedOffsetMs },
+    });
+    saveCloudPreset({ offset_ms: res.suggestedOffsetMs });
+  } catch (err) {
+    acousticResultText.textContent = err.message;
+  } finally {
+    micAutoCalBtn.disabled = false;
+  }
+});
+
+emitChirpBtn.addEventListener("click", () => {
+  wsClient.send({ type: "acoustic_chirp", target_id: mySpeakerId });
+});
+
+// ------------------------------------------------------------------
+// Music Search, Personal Library, Local Upload & Lyrics
 // ------------------------------------------------------------------
 
 async function loadPersonalLibrary() {
@@ -1171,7 +1477,7 @@ async function loadPersonalLibrary() {
     searchResults.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">★</div>
-        <p>Sign in with a Google account (with YouTube permission) to browse your personal YouTube Music playlists and Liked Music.</p>
+        <p>Sign in with Google (with YouTube permission) to browse your personal playlists and Liked Music.</p>
         <button id="inlineConnectYtBtn" class="btn btn-primary btn-sm">Sign in with Google for Library</button>
       </div>
     `;
@@ -1182,27 +1488,25 @@ async function loadPersonalLibrary() {
   searchStatus.textContent = "Loading your YouTube playlists…";
   searchStatus.classList.remove("hidden");
   try {
-    const resp = await fetch("/api/me/playlists");
+    const resp = await apiFetch("/api/me/playlists");
     const data = await resp.json();
     searchStatus.classList.add("hidden");
     if (!resp.ok) throw new Error(data.detail || "Unable to load playlists");
     currentLibraryPlaylists = data.playlists || [];
-    if (currentLibraryPlaylists.length === 0) {
-      searchResults.innerHTML = `<div class="empty-state compact"><p>No YouTube playlists found on this Google account.</p></div>`;
+    if (!currentLibraryPlaylists.length) {
+      searchResults.innerHTML = `<div class="empty-state compact"><p>No YouTube playlists found.</p></div>`;
       return;
     }
     searchResults.innerHTML = currentLibraryPlaylists
       .map(
         (c, idx) => `
         <div class="track-row" data-lib-idx="${idx}" style="cursor:pointer">
-          <img class="track-thumb" src="${escapeHtml(c.thumbnail)}" alt="" loading="lazy" />
+          <img class="track-thumb" src="${escapeHtml(safeImageUrl(c.thumbnail))}" alt="" loading="lazy" />
           <div class="track-info">
             <div class="track-title">${escapeHtml(c.title)}</div>
             <div class="track-sub">${escapeHtml(c.subtitle)} ${c.item_count ? `• ${escapeHtml(c.item_count)} items` : ""}</div>
           </div>
-          <div class="track-actions">
-            <button class="btn btn-outline btn-xs">Open →</button>
-          </div>
+          <div class="track-actions"><button class="btn btn-outline btn-xs">Open →</button></div>
         </div>`
       )
       .join("");
@@ -1225,19 +1529,16 @@ async function runSearch(query, filter = currentFilter) {
   searchStatus.classList.remove("hidden");
 
   try {
-    const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&filter=${encodeURIComponent(filter)}`);
+    const resp = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&filter=${encodeURIComponent(filter)}`);
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Search failed");
-
     searchStatus.classList.add("hidden");
     currentSearchTracks = data.tracks || [];
     currentSearchCollections = data.collections || [];
-
     if (data.resolved_url && data.playlist_title && currentSearchTracks.length > 0) {
       showCollectionView(data.playlist_title, "Resolved YouTube URL", currentSearchTracks);
       return;
     }
-
     renderSearchResults();
   } catch (err) {
     searchStatus.textContent = `Error: ${err.message}`;
@@ -1250,22 +1551,20 @@ function renderSearchResults() {
       .map(
         (c, idx) => `
         <div class="track-row" data-col-idx="${idx}" style="cursor:pointer">
-          <img class="track-thumb" src="${escapeHtml(c.thumbnail)}" alt="" loading="lazy" />
+          <img class="track-thumb" src="${escapeHtml(safeImageUrl(c.thumbnail))}" alt="" loading="lazy" />
           <div class="track-info">
             <div class="track-title">${escapeHtml(c.title)}</div>
             <div class="track-sub">${escapeHtml(c.subtitle)} ${c.year ? `• ${escapeHtml(c.year)}` : ""}</div>
           </div>
-          <div class="track-actions">
-            <button class="btn btn-outline btn-xs">Open →</button>
-          </div>
+          <div class="track-actions"><button class="btn btn-outline btn-xs">Open →</button></div>
         </div>`
       )
       .join("");
     return;
   }
 
-  if (currentSearchTracks.length === 0) {
-    searchResults.innerHTML = `<div class="empty-state compact"><p>No matching tracks found. Try another search or paste a YouTube Music URL.</p></div>`;
+  if (!currentSearchTracks.length) {
+    searchResults.innerHTML = `<div class="empty-state compact"><p>No matching tracks found.</p></div>`;
     return;
   }
 
@@ -1273,8 +1572,8 @@ function renderSearchResults() {
   searchResults.innerHTML = currentSearchTracks
     .map(
       (t, idx) => `
-      <div class="track-row" data-track-idx="${idx}">
-        <img class="track-thumb" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />
+      <div class="track-row">
+        <img class="track-thumb" src="${escapeHtml(safeImageUrl(t.thumbnail))}" alt="" loading="lazy" />
         <div class="track-info">
           <div class="track-title">${escapeHtml(t.title)}</div>
           <div class="track-sub">${escapeHtml(t.artist)} • ${formatTime(t.duration_sec)} ${
@@ -1301,8 +1600,8 @@ function showCollectionView(title, subtitle, tracks) {
   searchResults.innerHTML = currentCollectionTracks
     .map(
       (t, idx) => `
-      <div class="track-row" data-track-idx="${idx}">
-        <img class="track-thumb" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />
+      <div class="track-row">
+        <img class="track-thumb" src="${escapeHtml(safeImageUrl(t.thumbnail))}" alt="" loading="lazy" />
         <div class="track-info">
           <div class="track-title">${escapeHtml(t.title)}</div>
           <div class="track-sub">${escapeHtml(t.artist)} • ${formatTime(t.duration_sec)}</div>
@@ -1320,15 +1619,12 @@ async function openCollection(col, isPersonalLibrary = false) {
   searchStatus.textContent = `Loading ${col.title}…`;
   searchStatus.classList.remove("hidden");
   try {
-    let endpoint;
-    if (isPersonalLibrary) {
-      endpoint = `/api/me/playlists/${encodeURIComponent(col.id)}/tracks`;
-    } else if (col.kind === "album") {
-      endpoint = `/api/album/${encodeURIComponent(col.id)}`;
-    } else {
-      endpoint = `/api/playlist/${encodeURIComponent(col.id)}`;
-    }
-    const resp = await fetch(endpoint);
+    const endpoint = isPersonalLibrary
+      ? `/api/me/playlists/${encodeURIComponent(col.id)}/tracks`
+      : col.kind === "album"
+        ? `/api/album/${encodeURIComponent(col.id)}`
+        : `/api/playlist/${encodeURIComponent(col.id)}`;
+    const resp = await apiFetch(endpoint);
     const data = await resp.json();
     searchStatus.classList.add("hidden");
     showCollectionView(col.title || data.title, col.subtitle || data.subtitle, data.tracks || []);
@@ -1337,8 +1633,62 @@ async function openCollection(col, isPersonalLibrary = false) {
   }
 }
 
+localAudioFileInput.addEventListener("change", async () => {
+  const file = localAudioFileInput.files?.[0];
+  if (!file || !activeRoomCode) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  showToast(`Uploading ${file.name}…`);
+  try {
+    const upHeaders = activeRoomJoinTicket ? { "X-Room-Join-Ticket": activeRoomJoinTicket } : {};
+    const resp = await apiFetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}/upload`, {
+      method: "POST",
+      headers: upHeaders,
+      body: fd,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Upload failed");
+    if (canControlRoom()) {
+      wsClient.send({ type: "play_now", track: data.track });
+    } else {
+      wsClient.send({ type: "add_to_queue", tracks: [data.track], play_if_idle: true });
+    }
+    showToast(`Uploaded "${data.track.title}"`);
+  } catch (err) {
+    showToast(`Upload error: ${err.message}`);
+  } finally {
+    localAudioFileInput.value = "";
+  }
+});
+
+async function fetchAndRenderLyrics(videoId) {
+  if (!videoId || videoId.startsWith("local_")) {
+    lyricsBody.textContent = "Lyrics are not available for local uploaded files.";
+    return;
+  }
+  lastLyricsVideoId = videoId;
+  lyricsBody.textContent = "Loading lyrics…";
+  try {
+    const resp = await apiFetch(`/api/lyrics/${encodeURIComponent(videoId)}`);
+    const data = await resp.json();
+    lyricsBody.textContent = data.available && data.lyrics ? data.lyrics : "Lyrics unavailable for this track.";
+  } catch {
+    lyricsBody.textContent = "Unable to load lyrics right now.";
+  }
+}
+
+toggleLyricsBtn.addEventListener("click", () => {
+  const willOpen = lyricsPanel.classList.contains("hidden");
+  lyricsPanel.classList.toggle("hidden", !willOpen);
+  if (willOpen && roomState?.playback?.track?.video_id) {
+    fetchAndRenderLyrics(roomState.playback.track.video_id);
+  }
+});
+
+closeLyricsBtn.addEventListener("click", () => lyricsPanel.classList.add("hidden"));
+
 // ------------------------------------------------------------------
-// Studio Event Listeners
+// Studio & Transport Event Listeners
 // ------------------------------------------------------------------
 
 searchForm.addEventListener("submit", (e) => {
@@ -1356,11 +1706,8 @@ searchFilterTabs.addEventListener("click", (e) => {
   currentFilter = btn.dataset.filter || "songs";
   searchFilterTabs.querySelectorAll(".tab-chip").forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
-  if (currentFilter === "library") {
-    loadPersonalLibrary();
-  } else if (searchInput.value.trim()) {
-    runSearch(searchInput.value, currentFilter);
-  }
+  if (currentFilter === "library") loadPersonalLibrary();
+  else if (searchInput.value.trim()) runSearch(searchInput.value, currentFilter);
 });
 
 quickChips.addEventListener("click", (e) => {
@@ -1376,11 +1723,8 @@ quickChips.addEventListener("click", (e) => {
 collectionBackBtn.addEventListener("click", () => {
   isViewingCollection = false;
   collectionHeader.classList.add("hidden");
-  if (currentFilter === "library") {
-    loadPersonalLibrary();
-  } else {
-    renderSearchResults();
-  }
+  if (currentFilter === "library") loadPersonalLibrary();
+  else renderSearchResults();
 });
 
 collectionPlayAllBtn.addEventListener("click", () => {
@@ -1401,29 +1745,25 @@ searchResults.addEventListener("click", (e) => {
     if (col) openCollection(col, true);
     return;
   }
-
   const colRow = e.target.closest("[data-col-idx]");
   if (colRow) {
     const col = currentSearchCollections[Number(colRow.dataset.colIdx)];
     if (col) openCollection(col, false);
     return;
   }
-
   const actionBtn = e.target.closest("[data-action]");
   if (!actionBtn) return;
   const list = isViewingCollection ? currentCollectionTracks : currentSearchTracks;
   const track = list[Number(actionBtn.dataset.idx)];
   if (!track) return;
 
-  if (actionBtn.dataset.action === "play-now") {
-    wsClient.send({ type: "play_now", track });
-  } else if (actionBtn.dataset.action === "queue-add") {
+  if (actionBtn.dataset.action === "play-now") wsClient.send({ type: "play_now", track });
+  else if (actionBtn.dataset.action === "queue-add") {
     wsClient.send({ type: "add_to_queue", tracks: [track], play_if_idle: true });
     showToast(`Added "${track.title}" to queue`);
   }
 });
 
-// Transport & Queue
 playPauseBtn.addEventListener("click", () => {
   if (!roomState) return;
   wsClient.send({ type: roomState.playback.status === "playing" ? "pause" : "resume" });
@@ -1434,8 +1774,7 @@ resyncAllBtn.addEventListener("click", () => wsClient.send({ type: "force_resync
 shuffleBtn.addEventListener("click", () => wsClient.send({ type: "set_shuffle", enabled: !roomState?.shuffle }));
 repeatBtn.addEventListener("click", () => {
   const order = ["off", "all", "one"];
-  const nextMode = order[(order.indexOf(roomState?.repeat || "off") + 1) % order.length];
-  wsClient.send({ type: "set_repeat", mode: nextMode });
+  wsClient.send({ type: "set_repeat", mode: order[(order.indexOf(roomState?.repeat || "off") + 1) % 3] });
 });
 
 seekSlider.addEventListener("input", () => {
@@ -1449,10 +1788,10 @@ seekSlider.addEventListener("change", () => {
 
 loadRadioBtn.addEventListener("click", async () => {
   const vid = roomState?.playback?.track?.video_id;
-  if (!vid) return;
+  if (!vid || vid.startsWith("local_")) return;
   loadRadioBtn.disabled = true;
   try {
-    const resp = await fetch(`/api/related/${encodeURIComponent(vid)}`);
+    const resp = await apiFetch(`/api/related/${encodeURIComponent(vid)}`);
     const data = await resp.json();
     if (Array.isArray(data.tracks) && data.tracks.length > 0) {
       wsClient.send({ type: "add_to_queue", tracks: data.tracks, play_if_idle: false });
@@ -1463,6 +1802,12 @@ loadRadioBtn.addEventListener("click", async () => {
   }
 });
 
+reactionBar.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-emoji]");
+  if (!btn) return;
+  wsClient.send({ type: "send_reaction", emoji: btn.dataset.emoji });
+});
+
 clearQueueBtn.addEventListener("click", () => wsClient.send({ type: "clear_queue" }));
 
 queueList.addEventListener("click", (e) => {
@@ -1471,13 +1816,13 @@ queueList.addEventListener("click", (e) => {
   const idx = Number(target.dataset.idx);
   const action = target.dataset.action;
   if (action === "play-idx") wsClient.send({ type: "play_index", index: idx });
+  else if (action === "upvote") wsClient.send({ type: "upvote_queue", index: idx });
   else if (action === "up" && idx > 0) wsClient.send({ type: "move_queue", from_index: idx, to_index: idx - 1 });
   else if (action === "down" && roomState && idx < roomState.queue.length - 1) {
     wsClient.send({ type: "move_queue", from_index: idx, to_index: idx + 1 });
   } else if (action === "remove") wsClient.send({ type: "remove_queue", index: idx });
 });
 
-// Topbar & Leader Actions
 masterVolumeSlider.addEventListener("input", () => {
   const val = Number(masterVolumeSlider.value) / 100;
   masterVolumeLabel.textContent = `${masterVolumeSlider.value}%`;
@@ -1488,11 +1833,7 @@ guestControlToggle.addEventListener("change", () => wsClient.send({ type: "set_a
 collabQueueToggle.addEventListener("change", () => wsClient.send({ type: "set_allow_collab_queue", allowed: collabQueueToggle.checked }));
 muteMeControllerToggle.addEventListener("change", () => {
   audioEngine.setVolumes({ speakerMuted: muteMeControllerToggle.checked });
-  wsClient.send({
-    type: "update_speaker",
-    target_id: clientId,
-    fields: { muted: muteMeControllerToggle.checked },
-  });
+  wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { muted: muteMeControllerToggle.checked } });
 });
 
 calibrateToggleBtn.addEventListener("click", () => wsClient.send({ type: "set_calibration", active: !roomState?.calibration?.active }));
@@ -1504,9 +1845,7 @@ requestLeaderBtn.addEventListener("click", () => {
   wsClient.send({ type: "request_leader" });
   showToast("Sent leadership request to Room Leader");
 });
-takeLeaderBtn.addEventListener("click", () => {
-  wsClient.send({ type: "assign_leader", target_id: clientId });
-});
+takeLeaderBtn.addEventListener("click", () => wsClient.send({ type: "assign_leader", target_id: mySpeakerId }));
 
 leaderRequestsDrawer.addEventListener("click", (e) => {
   const appBtn = e.target.closest("[data-approve-req]");
@@ -1515,31 +1854,21 @@ leaderRequestsDrawer.addEventListener("click", (e) => {
     return;
   }
   const decBtn = e.target.closest("[data-decline-req]");
-  if (decBtn) {
-    wsClient.send({ type: "respond_leader_request", requester_id: decBtn.dataset.declineReq, approve: false });
-  }
+  if (decBtn) wsClient.send({ type: "respond_leader_request", requester_id: decBtn.dataset.declineReq, approve: false });
 });
 
-// Local Nudge Buttons
 document.querySelectorAll(".nudge-btn[data-nudge]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const raw = btn.dataset.nudge;
-    const nextOffset =
-      raw === "reset"
-        ? 0
-        : Math.max(-500, Math.min(500, Math.round(audioEngine.offsetMs + Number(raw))));
+    const nextOffset = raw === "reset" ? 0 : Math.max(-500, Math.min(500, Math.round(audioEngine.offsetMs + Number(raw))));
     audioEngine.setOffsetMs(nextOffset);
     localStorage.setItem("soundmesh_offset_ms", String(nextOffset));
     localOffsetStat.textContent = `${nextOffset} ms`;
-    wsClient.send({
-      type: "update_speaker",
-      target_id: clientId,
-      fields: { offset_ms: nextOffset },
-    });
+    wsClient.send({ type: "update_speaker", target_id: mySpeakerId, fields: { offset_ms: nextOffset } });
+    saveCloudPreset({ offset_ms: nextOffset });
   });
 });
 
-// Speaker List Delegated Events
 speakerList.addEventListener("change", (e) => {
   const card = e.target.closest(".speaker-card");
   if (!card) return;
@@ -1551,19 +1880,23 @@ speakerList.addEventListener("change", (e) => {
   if (field === "volume") value = Number(value) / 100;
   if (field === "offset_ms") value = Number(value);
 
-  if (targetId === clientId) {
-    if (field === "name") localStorage.setItem("soundmesh_speaker_name", value);
+  if (targetId === mySpeakerId) {
+    if (field === "name") {
+      localStorage.setItem("soundmesh_speaker_name", value);
+      saveCloudPreset({ name: value });
+    }
     if (field === "role") {
       localStorage.setItem("soundmesh_role", value);
       audioEngine.setRole(value);
+      saveCloudPreset({ role: value });
     }
     if (field === "offset_ms") {
       localStorage.setItem("soundmesh_offset_ms", String(value));
       audioEngine.setOffsetMs(value);
       localOffsetStat.textContent = `${Math.round(value)} ms`;
+      saveCloudPreset({ offset_ms: value });
     }
   }
-
   wsClient.send({ type: "update_speaker", target_id: targetId, fields: { [field]: value } });
 });
 
@@ -1576,11 +1909,11 @@ speakerList.addEventListener("input", (e) => {
     const val = Number(e.target.value);
     const label = card.querySelector("[data-role='offset-label']");
     if (label) label.textContent = `${Math.round(val)}ms`;
-    if (targetId === clientId) {
+    if (targetId === mySpeakerId) {
       audioEngine.setOffsetMs(val);
       localOffsetStat.textContent = `${Math.round(val)} ms`;
     }
-  } else if (field === "volume" && targetId === clientId) {
+  } else if (field === "volume" && targetId === mySpeakerId) {
     audioEngine.setVolumes({ speakerVolume: Number(e.target.value) / 100 });
   }
 });
@@ -1592,18 +1925,15 @@ speakerList.addEventListener("click", (e) => {
   const targetId = card.dataset.speakerId;
   const action = btn.dataset.action;
 
-  if (action === "make-leader") {
-    wsClient.send({ type: "assign_leader", target_id: targetId });
-  } else if (action === "ping") {
-    wsClient.send({ type: "identify_speaker", target_id: targetId });
-  } else if (action === "toggle-mute") {
+  if (action === "make-leader") wsClient.send({ type: "assign_leader", target_id: targetId });
+  else if (action === "ping") wsClient.send({ type: "identify_speaker", target_id: targetId });
+  else if (action === "toggle-mute") {
     const sp = roomState?.speakers?.find((s) => s.id === targetId);
     wsClient.send({ type: "update_speaker", target_id: targetId, fields: { muted: !(sp?.muted ?? false) } });
   } else if (action === "nudge") {
     const sp = roomState?.speakers?.find((s) => s.id === targetId);
-    const delta = Number(btn.dataset.delta || 0);
-    const nextOffset = Math.max(-500, Math.min(500, Math.round((sp?.offset_ms || 0) + delta)));
-    if (targetId === clientId) {
+    const nextOffset = Math.max(-500, Math.min(500, Math.round((sp?.offset_ms || 0) + Number(btn.dataset.delta || 0))));
+    if (targetId === mySpeakerId) {
       audioEngine.setOffsetMs(nextOffset);
       localStorage.setItem("soundmesh_offset_ms", String(nextOffset));
       localOffsetStat.textContent = `${nextOffset} ms`;
@@ -1612,18 +1942,18 @@ speakerList.addEventListener("click", (e) => {
   }
 });
 
-// QR & Setup Modals
+// QR, Share & Tunnel Modals
 async function openQrModal() {
   const code = activeRoomCode || "STUDIO";
   qrRoomCodeText.textContent = `#${code}`;
   qrModal.classList.remove("hidden");
+  nativeShareBtn.classList.toggle("hidden", !navigator.share);
   try {
-    const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}/info`);
+    const resp = await apiFetch(`/api/rooms/${encodeURIComponent(code)}/info`);
     const info = await resp.json();
     qrImage.src = info.qr_data_uri;
     qrUrlInput.value = info.join_url;
     denoWarning.classList.toggle("hidden", Boolean(info.deno_available));
-
     if (Array.isArray(info.join_urls) && info.join_urls.length > 1) {
       qrIpPickerWrap.classList.remove("hidden");
       qrIpSelect.innerHTML = info.join_urls
@@ -1640,7 +1970,19 @@ async function openQrModal() {
 qrIpSelect.addEventListener("change", () => {
   const url = qrIpSelect.value;
   qrUrlInput.value = url;
-  qrImage.src = `/api/qr?url=${encodeURIComponent(url)}`;
+  qrImage.src = apiUrl(`/api/qr?url=${encodeURIComponent(url)}`);
+});
+
+nativeShareBtn.addEventListener("click", async () => {
+  try {
+    await navigator.share({
+      title: `Join SoundMesh Room #${activeRoomCode}`,
+      text: "Join my SoundMesh synced multi-speaker room!",
+      url: qrUrlInput.value,
+    });
+  } catch {
+    // User cancelled share
+  }
 });
 
 openQrBtn.addEventListener("click", openQrModal);
@@ -1654,16 +1996,13 @@ closeOauthSetupBtn.addEventListener("click", () => oauthSetupModal.classList.add
 copyUrlBtn.addEventListener("click", async () => {
   const text = qrUrlInput.value;
   try {
-    if (navigator.clipboard && globalThis.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-    } else {
+    if (navigator.clipboard && globalThis.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
       qrUrlInput.select();
       document.execCommand("copy");
     }
     copyUrlBtn.textContent = "Copied!";
-    setTimeout(() => {
-      copyUrlBtn.textContent = "Copy Link";
-    }, 1400);
+    setTimeout(() => (copyUrlBtn.textContent = "Copy"), 1400);
   } catch {
     qrUrlInput.select();
   }
@@ -1674,16 +2013,10 @@ function setMobileTab(tabName) {
   mobileNav.querySelectorAll(".mobile-nav-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.target === tabName);
   });
-  document.body.classList.remove(
-    "mobile-tab-speaker",
-    "mobile-tab-stage",
-    "mobile-tab-search",
-    "mobile-tab-queue"
-  );
+  document.body.classList.remove("mobile-tab-speaker", "mobile-tab-stage", "mobile-tab-search", "mobile-tab-queue");
   document.body.classList.add(`mobile-tab-${tabName}`);
   document.querySelectorAll(".workspace > .panel").forEach((p) => {
-    const match =
-      p.dataset.tab === tabName || (tabName === "queue" && p.dataset.tab === "stage");
+    const match = p.dataset.tab === tabName || (tabName === "queue" && p.dataset.tab === "stage");
     p.classList.toggle("mobile-active", match);
   });
 }
@@ -1691,11 +2024,91 @@ function setMobileTab(tabName) {
 mobileNav.addEventListener("click", (e) => {
   const btn = e.target.closest(".mobile-nav-btn");
   if (!btn) return;
-  setMobileTab(btn.dataset.target || "speaker");
+  setMobileTab(btn.dataset.target || "stage");
 });
 
 // ------------------------------------------------------------------
-// 60fps Canvas Visualizer & Scrubber Loop
+// Free Public HTTPS Link (Cloudflare Quick Tunnel)
+// ------------------------------------------------------------------
+
+let tunnelPollTimer = null;
+
+async function refreshTunnelStatus() {
+  try {
+    const resp = await apiFetch("/api/tunnel/status");
+    if (!resp.ok) return;
+    const st = await resp.json();
+    renderTunnelUI(st);
+    if (st.starting && tunnelPollTimer === null) {
+      tunnelPollTimer = setInterval(refreshTunnelStatus, 2000);
+    } else if (!st.starting && tunnelPollTimer !== null) {
+      clearInterval(tunnelPollTimer);
+      tunnelPollTimer = null;
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+function renderTunnelUI(st) {
+  if (!st) return;
+  const active = Boolean(st.active && st.public_url);
+  const canControl = Boolean(st.can_control);
+  if (!active && !canControl) {
+    publicHostBar.classList.add("hidden");
+    return;
+  }
+  publicHostBar.classList.remove("hidden");
+  publicHostInactive.classList.toggle("hidden", active);
+  publicHostActive.classList.toggle("hidden", !active);
+  if (active) {
+    livePublicLinkAnchor.href = st.public_url;
+    livePublicLinkAnchor.textContent = st.public_url;
+    stopTunnelBtn.classList.toggle("hidden", !canControl);
+  } else {
+    startTunnelBtn.disabled = Boolean(st.starting);
+    startTunnelBtn.textContent = st.starting
+      ? "Starting free HTTPS tunnel…"
+      : "🌐 Go Live Online (Free HTTPS Link)";
+  }
+}
+
+startTunnelBtn.addEventListener("click", async () => {
+  startTunnelBtn.disabled = true;
+  startTunnelBtn.textContent = "Starting free HTTPS tunnel…";
+  try {
+    const resp = await apiFetch("/api/tunnel/start", { method: "POST" });
+    const data = await resp.json();
+    renderTunnelUI(data);
+    if (data.active && data.public_url) showToast(`Live public site ready: ${data.public_url}`);
+    else if (data.error) showToast(`Tunnel error: ${data.error}`);
+  } catch {
+    showToast("Unable to start public tunnel.");
+  } finally {
+    refreshTunnelStatus();
+  }
+});
+
+stopTunnelBtn.addEventListener("click", async () => {
+  await apiFetch("/api/tunnel/stop", { method: "POST" });
+  showToast("Public tunnel stopped.");
+  refreshTunnelStatus();
+});
+
+copyLiveLinkBtn.addEventListener("click", async () => {
+  const url = livePublicLinkAnchor.textContent || "";
+  if (!url) return;
+  try {
+    if (navigator.clipboard && globalThis.isSecureContext) await navigator.clipboard.writeText(url);
+    copyLiveLinkBtn.textContent = "Copied!";
+    setTimeout(() => (copyLiveLinkBtn.textContent = "Copy Public Link"), 1400);
+  } catch {
+    showToast(url);
+  }
+});
+
+// ------------------------------------------------------------------
+// 60fps Canvas Visualizer, Scrubber & Party Bass Lightshow Loop
 // ------------------------------------------------------------------
 
 const freqBins = new Uint8Array(64);
@@ -1709,6 +2122,11 @@ function animationLoop() {
     const clampedPos = dur > 0 ? Math.min(dur, pos) : pos;
     timeCurrent.textContent = formatTime(clampedPos);
     seekSlider.value = String(clampedPos);
+  }
+
+  if (activeRoomCode) {
+    const bass = audioEngine.getBassEnergy();
+    document.documentElement.style.setProperty("--bass", bass.toFixed(3));
   }
 
   if (vizCtx && activeRoomCode) {
@@ -1741,7 +2159,7 @@ function animationLoop() {
 // Bootstrap
 // ------------------------------------------------------------------
 
-async function handleInitialRoute(push = false) {
+function handleInitialRoute(push = false) {
   const params = new URLSearchParams(location.search);
   const authErr = params.get("auth_error");
   if (authErr) {
@@ -1751,117 +2169,20 @@ async function handleInitialRoute(push = false) {
 
   const roomMatch = location.pathname.match(/^\/room\/([A-Za-z0-9_-]+)/);
   if (roomMatch) {
-    await attemptEnterRoom(roomMatch[1], "", true);
+    attemptEnterRoom(roomMatch[1], "", true);
     return;
   }
   if (location.pathname.startsWith("/join")) {
-    await enterRoom("STUDIO", "", false);
+    enterRoom("STUDIO", "", false);
     return;
   }
   navigateToLobby(push);
 }
 
-// ------------------------------------------------------------------
-// Free Public HTTPS Link (Cloudflare Quick Tunnel)
-// ------------------------------------------------------------------
-
-let tunnelPollTimer = null;
-
-async function refreshTunnelStatus() {
-  try {
-    const resp = await fetch("/api/tunnel/status");
-    if (!resp.ok) return;
-    const st = await resp.json();
-    renderTunnelUI(st);
-
-    if (st.starting && tunnelPollTimer === null) {
-      tunnelPollTimer = setInterval(refreshTunnelStatus, 2000);
-    } else if (!st.starting && tunnelPollTimer !== null) {
-      clearInterval(tunnelPollTimer);
-      tunnelPollTimer = null;
-    }
-  } catch {
-    // Ignore transient errors
-  }
-}
-
-function renderTunnelUI(st) {
-  if (!st) return;
-  const active = Boolean(st.active && st.public_url);
-  const canControl = Boolean(st.can_control);
-
-  if (!active && !canControl) {
-    publicHostBar.classList.add("hidden");
-    return;
-  }
-
-  publicHostBar.classList.remove("hidden");
-  publicHostInactive.classList.toggle("hidden", active);
-  publicHostActive.classList.toggle("hidden", !active);
-
-  if (active) {
-    livePublicLinkAnchor.href = st.public_url;
-    livePublicLinkAnchor.textContent = st.public_url;
-    stopTunnelBtn.classList.toggle("hidden", !canControl);
-  } else {
-    startTunnelBtn.disabled = Boolean(st.starting);
-    startTunnelBtn.textContent = st.starting
-      ? "Starting free HTTPS tunnel…"
-      : "🌐 Go Live Online (Free HTTPS Link)";
-  }
-}
-
-startTunnelBtn.addEventListener("click", async () => {
-  startTunnelBtn.disabled = true;
-  startTunnelBtn.textContent = "Starting free HTTPS tunnel…";
-  try {
-    const resp = await fetch("/api/tunnel/start", { method: "POST" });
-    const data = await resp.json();
-    renderTunnelUI(data);
-    if (data.active && data.public_url) {
-      showToast(`Live public site ready: ${data.public_url}`);
-    } else if (data.error) {
-      showToast(`Tunnel error: ${data.error}`);
-    }
-  } catch {
-    showToast("Unable to start public tunnel.");
-  } finally {
-    refreshTunnelStatus();
-  }
-});
-
-stopTunnelBtn.addEventListener("click", async () => {
-  await fetch("/api/tunnel/stop", { method: "POST" });
-  showToast("Public tunnel stopped.");
-  refreshTunnelStatus();
-});
-
-copyLiveLinkBtn.addEventListener("click", async () => {
-  const url = livePublicLinkAnchor.textContent || "";
-  if (!url) return;
-  try {
-    if (navigator.clipboard && globalThis.isSecureContext) {
-      await navigator.clipboard.writeText(url);
-    } else {
-      const tmp = document.createElement("input");
-      tmp.value = url;
-      document.body.appendChild(tmp);
-      tmp.select();
-      document.execCommand("copy");
-      tmp.remove();
-    }
-    copyLiveLinkBtn.textContent = "Copied!";
-    setTimeout(() => {
-      copyLiveLinkBtn.textContent = "Copy Public Link";
-    }, 1400);
-  } catch {
-    showToast(url);
-  }
-});
-
 (async function init() {
+  applyUiMode(currentUiMode);
   await refreshAuth();
   await refreshTunnelStatus();
-  await handleInitialRoute(false);
+  handleInitialRoute(false);
   requestAnimationFrame(animationLoop);
 })();
