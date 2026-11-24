@@ -103,6 +103,7 @@ class Database:
                 self.database_url,
                 row_factory=dict_row,
                 autocommit=False,
+                prepare_threshold=None,
             )
         else:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
