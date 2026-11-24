@@ -463,9 +463,14 @@
           <div class="spatial-controls">
             <label class="checkbox-row">
               <input type="checkbox" id="spatialEnableToggle" />
-              <span>Enable 2D Spatial Panning on this device</span>
+              <span>Enable 2D Spatial Panning</span>
             </label>
             <button id="resetSpatialPosBtn" class="btn btn-ghost btn-xs">Center</button>
+          </div>
+          <div class="spatial-presets-row" id="spatialPresetsRow">
+            <button class="tab-chip" data-spatial-preset="stereo_pair">🎧 Stereo L/R</button>
+            <button class="tab-chip" data-spatial-preset="surround_4">🔊 4-Corner Surround</button>
+            <button class="tab-chip" data-spatial-preset="center_off">◎ Reset Off</button>
           </div>
           <div id="spatialRoomCanvas" class="spatial-room-map">
             <div class="spatial-zone tl">FRONT L</div>
@@ -475,7 +480,7 @@
             <div class="spatial-listener" title="Sweet Spot (Listener)">🎧</div>
             <div id="spatialNodesLayer" class="spatial-nodes-layer"></div>
           </div>
-          <p class="muted-text spatial-hint">Drag your speaker dot around the room to set live stereo pan and rear distance balance.</p>
+          <p class="muted-text spatial-hint">Optional surround balance: drag your dot (or any speaker if you're Leader) to steer L/R pan and rear depth.</p>
         </div>
 
         <!-- Tab 3: 5-Band Equalizer & Limiter -->
